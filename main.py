@@ -2,11 +2,16 @@ import os
 import re
 import unicodedata
 import requests
-from datetime import datetime
+import time as time_module
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 API_BASE = "https://oddslink.app/v1/sports"
+SPORTS_API_BASE = "https://api.sportsapi.app/v2"
 KYIV = ZoneInfo("Europe/Kyiv")
+SPORTS_API_MIN_INTERVAL = 6.1  # Free plan: 10 requests per minute.
+_sports_api_last_request = 0.0
+_sports_api_cache = {}
 
 # Официальные названия используем для поиска в данных API.
 # Псевдонимы применяются только при выводе в Discord.
@@ -478,17 +483,239 @@ def soccer_sort_key(event):
     return (1, 999, event.get("commence_time", ""))
 
 
-def is_tennis_relevant(event):
-    text = f"{event.get('home_team', '')} {event.get('away_team', '')}"
-    return contains_name(text, TENNIS_PRIORITY)
+def sports_api_get(path, params=None, cache=True):
+    """GET SportsAPI v2. The free plan is limited to 10 requests/minute."""
+    global _sports_api_last_request
+    key = os.environ.get("TENNIS_API_KEY")
+    if not key:
+        print("TENNIS_API_KEY is missing; tennis enrichment is disabled.")
+        return None
+
+    cache_key = (path, tuple(sorted((params or {}).items())))
+    if cache and cache_key in _sports_api_cache:
+        return _sports_api_cache[cache_key]
+
+    elapsed = time_module.monotonic() - _sports_api_last_request
+    if _sports_api_last_request and elapsed < SPORTS_API_MIN_INTERVAL:
+        time_module.sleep(SPORTS_API_MIN_INTERVAL - elapsed)
+
+    try:
+        response = requests.get(
+            f"{SPORTS_API_BASE}{path}",
+            params=params or {},
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=45,
+        )
+        _sports_api_last_request = time_module.monotonic()
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if cache:
+            _sports_api_cache[cache_key] = data
+        return data
+    except requests.RequestException as exc:
+        print(f"SportsAPI request failed for {path}: {exc}")
+        return None
+    except (ValueError, AttributeError) as exc:
+        print(f"SportsAPI returned invalid JSON for {path}: {exc}")
+        return None
+
+
+def _ranking_map(tour, limit):
+    rows = sports_api_get(f"/rankings/{tour}") or []
+    result = {}
+    for row in rows:
+        player = row.get("team") or {}
+        player_id = player.get("id")
+        position = row.get("position")
+        if player_id and isinstance(position, int) and position <= limit:
+            result[int(player_id)] = {
+                "position": position,
+                "name": player.get("name", ""),
+                "tour": tour.upper(),
+            }
+    return result
+
+
+def _is_priority_tennis_player(name):
+    return contains_name(name, TENNIS_PRIORITY)
+
+
+def get_sportsapi_tennis_fixtures(target_day, odds_events):
+    """Get ATP/WTA fixtures, filter by ATP top 20 / WTA top 30 and priority players."""
+    if not os.environ.get("TENNIS_API_KEY"):
+        print("TENNIS_API_KEY is missing; using OddsLink priority-player fallback.")
+        return []
+    categories = sports_api_get("/categories", {"sport": "tennis"}) or []
+    atp_rankings = _ranking_map("atp", 20)
+    wta_rankings = _ranking_map("wta", 30)
+    rankings = {**atp_rankings, **wta_rankings}
+
+    tours = []
+    for category in categories:
+        name = str(category.get("name") or "").strip()
+        normalized = normalize(name)
+        if normalized == "atp" or normalized.startswith("atp "):
+            tours.append((category, "ATP"))
+        elif normalized == "wta" or normalized.startswith("wta "):
+            tours.append((category, "WTA"))
+
+    # Kyiv's calendar day overlaps two UTC dates (depending on daylight saving).
+    local_start = datetime.combine(target_day, datetime.min.time(), tzinfo=KYIV)
+    local_end = local_start + timedelta(days=1) - timedelta(seconds=1)
+    utc_dates = sorted({
+        local_start.astimezone(timezone.utc).date().isoformat(),
+        local_end.astimezone(timezone.utc).date().isoformat(),
+    })
+
+    odds_lookup = {}
+    for odds_event in odds_events:
+        h = normalize(odds_event.get("home_team", ""))
+        a = normalize(odds_event.get("away_team", ""))
+        odds_lookup[(h, a)] = odds_event
+        odds_lookup[(a, h)] = odds_event
+
+    results = {}
+    for category, tour in tours:
+        category_id = category.get("id")
+        if not category_id:
+            continue
+        for utc_date in utc_dates:
+            fixtures = sports_api_get(
+                "/fixtures", {"date": utc_date, "category": category_id}
+            ) or []
+            for fixture in fixtures:
+                start_time = fixture.get("startTime")
+                home_obj = fixture.get("home") or {}
+                away_obj = fixture.get("away") or {}
+                home_name = home_obj.get("name") or ""
+                away_name = away_obj.get("name") or ""
+                if not start_time or not home_name or not away_name:
+                    continue
+                try:
+                    if local_day(start_time) != target_day:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+
+                home_id = home_obj.get("id")
+                away_id = away_obj.get("id")
+                home_rank = rankings.get(int(home_id)) if home_id else None
+                away_rank = rankings.get(int(away_id)) if away_id else None
+                ranked_player = bool(home_rank or away_rank)
+                priority_player = (
+                    _is_priority_tennis_player(home_name)
+                    or _is_priority_tennis_player(away_name)
+                )
+                if not (ranked_player or priority_player):
+                    continue
+
+                fixture_id = fixture.get("id") or (normalize(home_name), normalize(away_name), start_time)
+                if fixture_id in results:
+                    continue
+                league = fixture.get("league") or {}
+                odds = odds_lookup.get((normalize(home_name), normalize(away_name)), {})
+                surface = fixture.get("surface") or {}
+                results[fixture_id] = {
+                    "home_team": home_name,
+                    "away_team": away_name,
+                    "commence_time": start_time,
+                    "league": {"title": league.get("name") or category.get("name") or "Теннис"},
+                    "bookmakers": odds.get("bookmakers", []),
+                    "_sportsapi_fixture_id": fixture.get("id"),
+                    "_sportsapi_home_id": home_id,
+                    "_sportsapi_away_id": away_id,
+                    "_sportsapi_home_rank": home_rank,
+                    "_sportsapi_away_rank": away_rank,
+                    "_sportsapi_tour": tour,
+                    "_sportsapi_surface": surface.get("name") if isinstance(surface, dict) else None,
+                }
+
+    return list(results.values())
+
+
+def _form_string(side_data):
+    if not isinstance(side_data, dict):
+        return "нет данных"
+    recent = side_data.get("lastFixtures") or []
+    symbols = []
+    for match in recent[-5:]:
+        result = str(match.get("result") or "").lower()
+        if result == "win":
+            symbols.append("В")
+        elif result == "loss":
+            symbols.append("П")
+        elif result == "draw":
+            symbols.append("Н")
+    return "–".join(symbols) if symbols else "нет данных"
+
+
+def _player_surface_summary(player_id, surface_name=None):
+    if not player_id:
+        return ""
+    year = datetime.now(KYIV).year
+    rows = sports_api_get(
+        f"/teams/{player_id}/year-statistics", {"year": year}
+    ) or []
+    if not rows:
+        return ""
+
+    selected = []
+    if surface_name:
+        wanted = normalize(surface_name)
+        selected = [
+            row for row in rows
+            if normalize((row.get("surface") or {}).get("name", "")) == wanted
+        ]
+    if not selected:
+        selected = rows
+
+    bits = []
+    for row in selected[:3]:
+        surface = (row.get("surface") or {}).get("name") or "покрытие"
+        matches = row.get("matches")
+        wins = row.get("wins")
+        if isinstance(matches, int) and matches > 0 and isinstance(wins, int):
+            pct = round(100 * wins / matches)
+            bits.append(f"{surface}: {wins}/{matches} побед ({pct}%)")
+    return "; ".join(bits)
+
+
+def tennis_match_analysis(event):
+    fixture_id = event.get("_sportsapi_fixture_id")
+    if not fixture_id:
+        return "Аналитика SportsAPI недоступна для этого матча."
+
+    form_data = sports_api_get(f"/fixtures/{fixture_id}/form") or {}
+    home_form = _form_string(form_data.get("home"))
+    away_form = _form_string(form_data.get("away"))
+
+    h2h_data = sports_api_get(f"/fixtures/{fixture_id}/h2h")
+    h2h_text = "личные встречи: нет подтверждённых данных"
+    if isinstance(h2h_data, dict):
+        home_wins = h2h_data.get("homeWins")
+        away_wins = h2h_data.get("awayWins")
+        if isinstance(home_wins, int) and isinstance(away_wins, int):
+            h2h_text = f"личные встречи: {home_wins}–{away_wins}"
+
+    surface = event.get("_sportsapi_surface")
+    home_surface = _player_surface_summary(event.get("_sportsapi_home_id"), surface)
+    away_surface = _player_surface_summary(event.get("_sportsapi_away_id"), surface)
+
+    details = [f"Форма: {home_form} / {away_form}", h2h_text]
+    if home_surface or away_surface:
+        details.append(f"Покрытия: {home_surface or 'нет данных'} | {away_surface or 'нет данных'}")
+    return "\n".join(details)
 
 
 def tennis_sort_key(event):
+    home_rank = event.get("_sportsapi_home_rank") or {}
+    away_rank = event.get("_sportsapi_away_rank") or {}
+    rank_values = [x.get("position") for x in (home_rank, away_rank) if x.get("position")]
     text = f"{event.get('home_team', '')} {event.get('away_team', '')}"
-    for idx, name in enumerate(TENNIS_PRIORITY):
-        if contains_name(text, [name]):
-            return (idx, event.get("commence_time", ""))
-    return (999, event.get("commence_time", ""))
+    priority = next((idx for idx, name in enumerate(TENNIS_PRIORITY)
+                     if contains_name(text, [name])), 999)
+    return (0 if priority < 999 else 1, priority, min(rank_values or [999]), event.get("commence_time", ""))
 
 
 def main():
@@ -508,12 +735,20 @@ def main():
         and local_day(event["commence_time"]) == today
         and is_soccer_relevant(event)
     ]
-    tennis = [
-        event for event in get_fixtures("tennis")
-        if event.get("commence_time")
-        and local_day(event["commence_time"]) == today
-        and is_tennis_relevant(event)
-    ]
+    odds_tennis = get_fixtures("tennis")
+    tennis = get_sportsapi_tennis_fixtures(today, odds_tennis)
+    if not tennis:
+        # Safe fallback: OddsLink still supplies matches for the eight manually prioritised players.
+        tennis = [
+            event for event in odds_tennis
+            if event.get("commence_time")
+            and local_day(event["commence_time"]) == today
+            and contains_name(
+                f"{event.get('home_team', '')} {event.get('away_team', '')}",
+                TENNIS_PRIORITY,
+            )
+        ]
+        print("SportsAPI returned no matching tennis fixtures; using OddsLink priority-player fallback.")
 
     soccer.sort(key=soccer_sort_key)
     tennis.sort(key=tennis_sort_key)
@@ -561,14 +796,26 @@ def main():
             home = display_tennis_player(event.get("home_team", "?"))
             away = display_tennis_player(event.get("away_team", "?"))
             prices = price_text(event, tennis=True)
-            lines.append(
-                f"**{display_competition(tournament)}** · "
-                f"`{format_time(event['commence_time'])}`"
+            home_rank = event.get("_sportsapi_home_rank") or {}
+            away_rank = event.get("_sportsapi_away_rank") or {}
+            rank_bits = []
+            if home_rank.get("position"):
+                rank_bits.append(f"{home_rank.get('tour')} #{home_rank['position']}")
+            if away_rank.get("position"):
+                rank_bits.append(f"{away_rank.get('tour')} #{away_rank['position']}")
+            tournament_line = (
+                f"**{display_competition(tournament)}** · ` {event.get('_sportsapi_tour', '')} "
+                f"{format_time(event['commence_time'])}`"
             )
+            if rank_bits:
+                tournament_line += " · " + " / ".join(rank_bits)
+            lines.append(tournament_line)
             lines.append(f"{home} — {away}")
             lines.append(f"`П1 {prices.split(' · ')[0]} · П2 {prices.split(' · ')[1]}`"
                          if prices != "Коэффициенты недоступны"
                          else prices)
+            analysis_text = tennis_match_analysis(event)
+            lines.append(f"_{analysis_text}_")
             lines.append("")
     else:
         lines.append("Матчи выбранных игроков на сегодня не найдены.")
