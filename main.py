@@ -463,6 +463,32 @@ def discord_send(content, date_label=None):
             if files:
                 files["files[0]"][1].close()
 
+    # Отдельное сообщение с упоминанием ролей
+    mention_payload = {
+        "content": (
+            "<@&792838977212252161> "
+            "<@&791401162242130004> "
+            "Мой вердикт: выбираем на эмоциях и на кефах, "
+            "так как вы — ЛУДОМАНЫ."
+        ),
+        "allowed_mentions": {
+            "roles": [
+                "792838977212252161",
+                "791401162242130004"
+            ]
+        }
+    }
+
+    requests.post(
+        f"https://discord.com/api/v10/channels/{channel}/messages",
+        headers={
+            "Authorization": f"Bot {token}",
+            "Content-Type": "application/json"
+        },
+        json=mention_payload,
+        timeout=30
+    ).raise_for_status()
+
 def _ansi_odds(value, color_code):
     return f"\x1b[{color_code}m{value:.2f}\x1b[0m"
 
@@ -1212,11 +1238,6 @@ def build_daily_analysis(soccer, tennis):
             "но это не делает фаворитов гарантией»."
         )
         lines.append("")
-
-    lines.append(
-        "«@BOSS VSK @VSK Мой вердикт: выбираем на эмоциях и кэфах, так как вы - ЛУДОМАНЫ. "
-    )
-    lines.append("")
 
     lines.append(
         "*тот кто создал бота красава (миша и гпт)*"
