@@ -1,34 +1,90 @@
 import os
+import re
+import unicodedata
 import requests
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 API_BASE = "https://oddslink.app/v1/sports"
 KYIV = ZoneInfo("Europe/Kyiv")
 
-SOCCER_TEAMS = [
-    "Dynamo Kyiv", "Dynamo Kiev", "Динамо Киев", "Shakhtar Donetsk", "Шахтёр Донецк", "Шахтер Донецк",
-    "Borussia Dortmund", "Боруссия Дортмунд", "Real Madrid", "Реал Мадрид",
-    "Atletico Madrid", "Atlético Madrid", "Атлетико Мадрид", "Bayern Munich", "Bayern München", "Бавария",
-    "Barcelona", "Барселона", "Manchester City", "Манчестер Сити", "Liverpool", "Ливерпуль",
-    "Arsenal", "Арсенал", "The New Saints", "New Saints", "Нью-Сейнтс", "Paris Saint-Germain", "PSG", "ПСЖ",
+# Официальные названия используем для поиска в данных API.
+# Псевдонимы применяются только при выводе в Discord.
+TEAM_ALIASES = {
+    "Liverpool": "Ливерка",
+    "Atletico Madrid": "Матрасники",
+    "Atlético Madrid": "Матрасники",
+    "Barcelona": "Варселона",
+    "Real Madrid": "Реал Вардрид",
+    "Shakhtar Donetsk": "Шлюхтар Донецк",
+    "Шахтёр Донецк": "Шлюхтар Донецк",
+    "Шахтер Донецк": "Шлюхтар Донецк",
+}
+
+# Клубы, за которыми следим независимо от турнира.
+SOCCER_CLUBS = [
+    "Dynamo Kyiv", "Dynamo Kiev", "Динамо Киев", "Динамо Київ",
+    "Shakhtar Donetsk", "Шахтёр Донецк", "Шахтер Донецк",
+    "Borussia Dortmund", "Боруссия Дортмунд",
+    "Real Madrid", "Реал Мадрид",
+    "Atletico Madrid", "Atlético Madrid", "Атлетико Мадрид",
+    "Bayern Munich", "Bayern München", "Бавария",
+    "Barcelona", "Барселона",
+    "Manchester City", "Манчестер Сити",
+    "Liverpool", "Ливерпуль",
+    "Arsenal", "Арсенал",
+    "The New Saints", "New Saints", "Нью-Сейнтс",
+    "Paris Saint-Germain", "PSG", "ПСЖ",
 ]
-SOCCER_COMPETITIONS = [
-    "premier league ukraine", "ukraine premier league", "упл", "ukrainian cup", "кубок украины",
-    "champions league", "лига чемпионов", "europa league", "лига европы",
+
+# Европейские сборные + Аргентина и Бразилия.
+NATIONAL_TEAMS = [
+    "Albania", "Andorra", "Armenia", "Austria", "Azerbaijan",
+    "Belarus", "Belgium", "Bosnia", "Bosnia and Herzegovina",
+    "Bulgaria", "Croatia", "Cyprus", "Czech Republic", "Czechia",
+    "Denmark", "England", "Estonia", "Faroe Islands", "Finland",
+    "France", "Georgia", "Germany", "Gibraltar", "Greece",
+    "Hungary", "Iceland", "Ireland", "Israel", "Italy",
+    "Kazakhstan", "Kosovo", "Latvia", "Liechtenstein", "Lithuania",
+    "Luxembourg", "Malta", "Moldova", "Montenegro", "Netherlands",
+    "North Macedonia", "Northern Ireland", "Norway", "Poland",
+    "Portugal", "Romania", "Russia", "San Marino", "Scotland",
+    "Serbia", "Slovakia", "Slovenia", "Spain", "Sweden",
+    "Switzerland", "Turkey", "Türkiye", "Ukraine", "Wales",
+    "Argentina", "Brazil", "Brasil",
+]
+
+ALLOWED_COMPETITIONS = [
+    "premier league ukraine", "ukraine premier league", "упл",
+    "ukrainian cup", "ukraine cup", "кубок украины", "кубок україни",
+    "champions league", "лига чемпионов",
+    "europa league", "лига европы",
     "conference league", "лига конференций",
-    "euro", "world cup", "nations league", "qualifier", "qualification",
-    "international friendly", "friendlies", "world cup qualification",
 ]
+
+INTERNATIONAL_MARKERS = [
+    "nations league", "uefa euro", "euro qualification",
+    "european qualification", "world cup qualification",
+    "world cup qualifiers", "international friendly",
+    "international friendlies", "friendlies", "qualifier",
+    "qualification",
+]
+
+# Ручной приоритет клубов — порядок здесь важнее любых рейтингов.
 PRIORITY_TEAMS = [
-    "Динамо Киев", "Dynamo Kyiv", "Dynamo Kiev",
-    "Шахтёр Донецк", "Шахтер Донецк", "Shakhtar Donetsk",
-    "Боруссия Дортмунд", "Borussia Dortmund", "Реал Мадрид", "Real Madrid",
-    "Атлетико Мадрид", "Atletico Madrid", "Atlético Madrid",
-    "Бавария", "Bayern Munich", "Bayern München", "Барселона", "Barcelona",
-    "Манчестер Сити", "Manchester City", "Ливерпуль", "Liverpool",
-    "Арсенал", "Arsenal", "Нью-Сейнтс", "The New Saints", "New Saints",
+    "Dynamo Kyiv", "Dynamo Kiev", "Динамо Киев", "Динамо Київ",
+    "Shakhtar Donetsk", "Шахтёр Донецк", "Шахтер Донецк",
+    "Borussia Dortmund", "Боруссия Дортмунд",
+    "Real Madrid", "Реал Мадрид",
+    "Atletico Madrid", "Atlético Madrid", "Атлетико Мадрид",
+    "Bayern Munich", "Bayern München", "Бавария",
+    "Barcelona", "Барселона",
+    "Manchester City", "Манчестер Сити",
+    "Liverpool", "Ливерпуль",
+    "Arsenal", "Арсенал",
+    "The New Saints", "New Saints", "Нью-Сейнтс",
 ]
+
 TENNIS_PRIORITY = [
     "Anna Kalinskaya", "Анна Калинская",
     "Mirra Andreeva", "Мирра Андреева",
@@ -39,6 +95,18 @@ TENNIS_PRIORITY = [
     "Jannik Sinner", "Янник Синнер",
     "Daniil Medvedev", "Даниил Медведев",
 ]
+
+
+def normalize(value):
+    value = unicodedata.normalize("NFKD", str(value or ""))
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9а-я]+", " ", value.lower()).strip()
+
+
+def contains_name(text, names):
+    normalized_text = f" {normalize(text)} "
+    return any(f" {normalize(name)} " in normalized_text for name in names)
+
 
 def get_fixtures(sport):
     key = os.environ["ODDS_API_KEY"]
@@ -54,19 +122,30 @@ def get_fixtures(sport):
         raise RuntimeError(data["error"])
     return data if isinstance(data, list) else []
 
+
 def local_day(iso_time):
     dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
     return dt.astimezone(KYIV).date()
+
 
 def format_time(iso_time):
     dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
     return dt.astimezone(KYIV).strftime("%H:%M")
 
+
+def display_team(name):
+    """Показывает прозвище, если оно задано; иначе исходное имя."""
+    normalized = normalize(name)
+    for original, nickname in TEAM_ALIASES.items():
+        if normalize(original) == normalized:
+            return nickname
+    return name or "?"
+
+
 def h2h_prices(event):
-    # Average decimal prices across bookmakers for each outcome.
+    # Среднее десятичных коэффициентов по доступным букмекерам.
     values = {}
-    books = event.get("bookmakers") or []
-    for book in books:
+    for book in event.get("bookmakers") or []:
         for market in book.get("markets") or []:
             if market.get("key") != "h2h":
                 continue
@@ -74,105 +153,180 @@ def h2h_prices(event):
                 try:
                     price = float(outcome["price"])
                     if price > 1:
-                        values.setdefault(outcome["name"], []).append(price)
+                        values.setdefault(normalize(outcome["name"]), []).append(price)
                 except (KeyError, TypeError, ValueError):
                     pass
     return {name: sum(prices) / len(prices) for name, prices in values.items() if prices}
+
 
 def price_text(event, tennis=False):
     prices = h2h_prices(event)
     if not prices:
         return "Коэффициенты недоступны"
+
+    home = normalize(event.get("home_team", ""))
+    away = normalize(event.get("away_team", ""))
+
     if tennis:
-        a, b = event.get("home_team", ""), event.get("away_team", "")
-        return f"{a} — {prices[a]:.2f} | {b} — {prices[b]:.2f}" if a in prices and b in prices else "Коэффициенты недоступны"
-    home, away = event.get("home_team", ""), event.get("away_team", "")
-    draw = next((v for k, v in prices.items() if k.lower() in ("draw", "tie")), None)
+        if home in prices and away in prices:
+            return f"{prices[home]:.2f} · {prices[away]:.2f}"
+        return "Коэффициенты недоступны"
+
+    draw = next((v for k, v in prices.items() if k in ("draw", "tie")), None)
     if home in prices and away in prices and draw is not None:
         return f"П1 {prices[home]:.2f} · X {draw:.2f} · П2 {prices[away]:.2f}"
     return "Коэффициенты недоступны"
 
+
+def is_national_team_match(event):
+    home = event.get("home_team", "")
+    away = event.get("away_team", "")
+    league = (event.get("league") or {}).get("title", "")
+    international = contains_name(league, INTERNATIONAL_MARKERS)
+    both_national = (
+        contains_name(home, NATIONAL_TEAMS)
+        and contains_name(away, NATIONAL_TEAMS)
+    )
+    return international and both_national
+
+
 def is_soccer_relevant(event):
-    home, away = event.get("home_team", ""), event.get("away_team", "")
-    league = ((event.get("league") or {}).get("title") or "").lower()
-    text = f"{home} {away}".lower()
-    team_match = any(t.lower() in text for t in SOCCER_TEAMS)
-    comp_match = any(c in league for c in SOCCER_COMPETITIONS)
-    # National-team games are included when the competition name clearly indicates international football.
-    return team_match or comp_match
+    home = event.get("home_team", "")
+    away = event.get("away_team", "")
+    league = (event.get("league") or {}).get("title", "")
+
+    # Из клубов берём только команды из заданного списка.
+    selected_club = (
+        contains_name(home, SOCCER_CLUBS)
+        or contains_name(away, SOCCER_CLUBS)
+    )
+
+    # Из турниров берём УПЛ, Кубок Украины и три еврокубка.
+    selected_competition = contains_name(league, ALLOWED_COMPETITIONS)
+
+    # Сборные — только европейские, Аргентина и Бразилия,
+    # и только когда обе команды распознаны как сборные.
+    national_match = is_national_team_match(event)
+
+    return selected_club or selected_competition or national_match
+
 
 def soccer_sort_key(event):
-    text = f"{event.get('home_team','')} {event.get('away_team','')}".lower()
+    text = f"{event.get('home_team', '')} {event.get('away_team', '')}"
     for idx, name in enumerate(PRIORITY_TEAMS):
-        if name.lower() in text:
+        if contains_name(text, [name]):
             return (0, idx, event.get("commence_time", ""))
     return (1, 999, event.get("commence_time", ""))
 
+
 def is_tennis_relevant(event):
-    text = f"{event.get('home_team','')} {event.get('away_team','')}".lower()
-    return any(name.lower() in text for name in TENNIS_PRIORITY)
+    text = f"{event.get('home_team', '')} {event.get('away_team', '')}"
+    return contains_name(text, TENNIS_PRIORITY)
+
+
+def tennis_sort_key(event):
+    text = f"{event.get('home_team', '')} {event.get('away_team', '')}"
+    for idx, name in enumerate(TENNIS_PRIORITY):
+        if contains_name(text, [name]):
+            return (idx, event.get("commence_time", ""))
+    return (999, event.get("commence_time", ""))
+
 
 def discord_send(content):
     token = os.environ["DISCORD_BOT_TOKEN"]
     channel = os.environ["DISCORD_CHANNEL_ID"]
     response = requests.post(
         f"https://discord.com/api/v10/channels/{channel}/messages",
-        headers={"Authorization": f"Bot {token}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bot {token}",
+            "Content-Type": "application/json",
+        },
         json={"content": content[:1900]},
         timeout=30,
     )
     response.raise_for_status()
 
+
 def main():
     now = datetime.now(KYIV)
-    # GitHub Actions has two UTC schedules for winter/summer time.
-    # Only the run that actually lands at 00:00 Kyiv time publishes.
     manual_run = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+
+    # Автоматический запуск публикует только около полуночи по Киеву.
     if not manual_run and (now.hour != 0 or now.minute > 10):
         print(f"Not Kyiv midnight ({now.isoformat()}); skipping.")
         return
 
     today = now.date()
-    soccer = [e for e in get_fixtures("soccer")
-              if e.get("commence_time") and local_day(e["commence_time"]) == today
-              and is_soccer_relevant(e)]
-    tennis = [e for e in get_fixtures("tennis")
-              if e.get("commence_time") and local_day(e["commence_time"]) == today
-              and is_tennis_relevant(e)]
+
+    soccer = [
+        event for event in get_fixtures("soccer")
+        if event.get("commence_time")
+        and local_day(event["commence_time"]) == today
+        and is_soccer_relevant(event)
+    ]
+    tennis = [
+        event for event in get_fixtures("tennis")
+        if event.get("commence_time")
+        and local_day(event["commence_time"]) == today
+        and is_tennis_relevant(event)
+    ]
 
     soccer.sort(key=soccer_sort_key)
-    tennis.sort(key=lambda e: (
-        next((i for i, name in enumerate(TENNIS_PRIORITY)
-              if name.lower() in f"{e.get('home_team','')} {e.get('away_team','')}".lower()), 999),
-        e.get("commence_time", "")
-    ))
+    tennis.sort(key=tennis_sort_key)
 
-    lines = [f"🏆 **СПОРТИВНАЯ АФИША — {today.strftime('%d.%m.%Y')}**",
-             "Время указано по Киеву.", ""]
-    lines.append("⚽ **ФУТБОЛ**")
+    lines = [
+        f"🏆 **BEZUMNIY HAALAND — СПОРТИВНАЯ АФИША {today.strftime('%d.%m.%Y')}**",
+        "Время указано по Киеву.",
+        "",
+        "⚽ **ФУТБОЛ**",
+    ]
+
     if soccer:
-        for e in soccer[:25]:
-            league = (e.get("league") or {}).get("title", "Турнир")
-            lines.append(f"**{format_time(e['commence_time'])}** · {league}")
-            lines.append(f"{e.get('home_team','?')} — {e.get('away_team','?')}")
-            lines.append(f"Коэффициенты: {price_text(e)}")
+        for event in soccer[:25]:
+            league = (event.get("league") or {}).get("title") or "Турнир"
+            home = display_team(event.get("home_team", "?"))
+            away = display_team(event.get("away_team", "?"))
+            lines.append(f"**{format_time(event['commence_time'])}** · {league}")
+            lines.append(f"{home} — {away}")
+            lines.append(f"Коэффициенты: {price_text(event)}")
     else:
-        lines.append("Подходящих матчей на сегодня не найдено.")
+        lines.append("Сегодня подходящих матчей из выбранного списка нет.")
 
     lines += ["", "🎾 **ТЕННИС**"]
+
     if tennis:
-        for e in tennis[:20]:
-            tournament = (e.get("league") or {}).get("title") or e.get("sport_title") or "Турнир"
-            lines.append(f"**{format_time(e['commence_time'])}** · {tournament}")
-            lines.append(f"{e.get('home_team','?')} — {e.get('away_team','?')}")
-            lines.append(f"Коэффициенты: {price_text(e, tennis=True)}")
+        for event in tennis[:20]:
+            tournament = (
+                (event.get("league") or {}).get("title")
+                or event.get("sport_title")
+                or "Турнир"
+            )
+            home = display_team(event.get("home_team", "?"))
+            away = display_team(event.get("away_team", "?"))
+            prices = price_text(event, tennis=True)
+            if prices != "Коэффициенты недоступны":
+                price_line = f"Коэффициенты (П1 · П2): {prices}"
+            else:
+                price_line = prices
+            lines.append(f"**{format_time(event['commence_time'])}** · {tournament}")
+            lines.append(f"{home} — {away}")
+            lines.append(price_line)
     else:
         lines.append("Матчи выбранных игроков на сегодня не найдены.")
 
-    lines += ["", "🧠 **АНАЛИТИЧЕСКИЙ КОММЕНТАРИЙ**",
-              "ИИ-рецензия будет подключена отдельным этапом. Это не прогноз с гарантией результата и не рекомендация ставить."]
+    lines += [
+        "",
+        "🧠 **BEZUMNIY HAALAND DUMAYET...**",
+        "Аналитическая рубрика будет подключена следующим этапом. "
+        "Никаких выдуманных травм, судей или статистики — только проверяемые данные.",
+    ]
+
     discord_send("\n".join(lines))
-    print(f"Published: {len(soccer)} football fixtures, {len(tennis)} tennis fixtures.")
+    print(
+        f"Published: {len(soccer)} football fixtures, "
+        f"{len(tennis)} tennis fixtures."
+    )
+
 
 if __name__ == "__main__":
     main()
