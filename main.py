@@ -718,6 +718,258 @@ def tennis_sort_key(event):
     return (0 if priority < 999 else 1, priority, min(rank_values or [999]), event.get("commence_time", ""))
 
 
+
+FOOTBALL_API_BASE = "https://v3.football.api-sports.io"
+
+
+def football_api_get(endpoint, params=None):
+    """Fetch one API-Football v3 resource. Missing/failed data never breaks the poster."""
+    key = os.environ.get("FOOTBALL_API_KEY")
+    if not key:
+        print("FOOTBALL_API_KEY is missing; football enrichment is disabled.")
+        return []
+    try:
+        response = requests.get(
+            f"{FOOTBALL_API_BASE}/{endpoint.lstrip('/')}",
+            params=params or {},
+            headers={"x-apisports-key": key},
+            timeout=35,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        errors = payload.get("errors") if isinstance(payload, dict) else None
+        if errors:
+            print(f"API-Football {endpoint} returned errors: {errors}")
+            return []
+        data = payload.get("response") if isinstance(payload, dict) else None
+        return data if isinstance(data, list) else []
+    except requests.RequestException as exc:
+        print(f"API-Football request failed for {endpoint}: {exc}")
+        return []
+    except (ValueError, AttributeError) as exc:
+        print(f"API-Football returned invalid JSON for {endpoint}: {exc}")
+        return []
+
+
+def _football_fixture_key(home, away):
+    return tuple(sorted((normalize(home), normalize(away))))
+
+
+def enrich_football_matches(target_day, soccer_events):
+    """Attach verified form, prediction, absences and table data to matched fixtures.
+
+    Daily budget is deliberately modest: one fixture list, one injuries list,
+    up to 10 predictions and up to 4 standings requests.
+    """
+    if not soccer_events or not os.environ.get("FOOTBALL_API_KEY"):
+        return
+
+    fixtures = football_api_get(
+        "fixtures", {"date": target_day.isoformat(), "timezone": "Europe/Kyiv"}
+    )
+    fixture_map = {}
+    for fixture in fixtures:
+        teams = fixture.get("teams") or {}
+        home = (teams.get("home") or {}).get("name")
+        away = (teams.get("away") or {}).get("name")
+        if home and away:
+            fixture_map[_football_fixture_key(home, away)] = fixture
+
+    matched = []
+    for event in soccer_events:
+        key = _football_fixture_key(event.get("home_team", ""), event.get("away_team", ""))
+        fixture = fixture_map.get(key)
+        if fixture:
+            event["_api_football_fixture"] = fixture
+            matched.append(event)
+
+    if not matched:
+        print("API-Football: no exact team-pair matches found for today's selected fixtures.")
+        return
+
+    # One daily call for absences; the API labels confirmed absences separately
+    # from questionable cases, so the message preserves that distinction.
+    injuries = football_api_get(
+        "injuries", {"date": target_day.isoformat(), "timezone": "Europe/Kyiv"}
+    )
+    injuries_by_fixture = {}
+    for item in injuries:
+        fixture_id = (item.get("fixture") or {}).get("id")
+        if fixture_id:
+            injuries_by_fixture.setdefault(fixture_id, []).append(item)
+    for event in matched:
+        fixture_id = (event.get("_api_football_fixture", {}).get("fixture") or {}).get("id")
+        event["_api_football_injuries"] = injuries_by_fixture.get(fixture_id, [])
+
+    # Predictions include API-Football's form/comparison data. Limit calls so
+    # the free daily quota remains available for future runs.
+    for event in matched[:5]:
+        fixture_id = (event.get("_api_football_fixture", {}).get("fixture") or {}).get("id")
+        if fixture_id:
+            rows = football_api_get("predictions", {"fixture": fixture_id})
+            event["_api_football_prediction"] = rows[0] if rows else None
+
+    # Standings are useful only where the API returns a real league table.
+    league_requests = []
+    for event in matched:
+        league = (event.get("_api_football_fixture", {}).get("league") or {})
+        league_id, season = league.get("id"), league.get("season")
+        if league_id and season and (league_id, season) not in league_requests:
+            league_requests.append((league_id, season))
+    standings_map = {}
+    for league_id, season in league_requests[:4]:
+        rows = football_api_get("standings", {"league": league_id, "season": season})
+        for row in rows:
+            league_data = row.get("league") or {}
+            for group in league_data.get("standings") or []:
+                for team_row in group:
+                    team_id = (team_row.get("team") or {}).get("id")
+                    if team_id:
+                        standings_map[(league_id, team_id)] = team_row
+    for event in matched:
+        fixture = event.get("_api_football_fixture") or {}
+        league = fixture.get("league") or {}
+        teams = fixture.get("teams") or {}
+        for side in ("home", "away"):
+            team_id = (teams.get(side) or {}).get("id")
+            event.setdefault("_api_football_standings", {})[side] = standings_map.get(
+                (league.get("id"), team_id)
+            )
+
+
+def _api_form_text(value):
+    value = str(value or "").upper()
+    mapping = {"W": "В", "L": "П", "D": "Н"}
+    result = "".join(mapping.get(ch, "") for ch in value if ch in mapping)
+    return result or "нет данных"
+
+
+def _market_percentages(event):
+    prices = h2h_prices(event)
+    home = prices.get(normalize(event.get("home_team", "")))
+    away = prices.get(normalize(event.get("away_team", "")))
+    draw = next((v for k, v in prices.items() if k in ("draw", "tie")), None)
+    if not home or not away:
+        return None
+    implied = [1 / home, 1 / away]
+    if draw:
+        implied.insert(1, 1 / draw)
+    total = sum(implied)
+    return [round(value / total * 100) for value in implied]
+
+
+def football_match_analysis(event):
+    fixture = event.get("_api_football_fixture")
+    if not fixture:
+        return "API-Football: подтверждённая карточка матча не найдена."
+
+    bits = []
+    teams = fixture.get("teams") or {}
+    home_obj, away_obj = teams.get("home") or {}, teams.get("away") or {}
+    prediction = event.get("_api_football_prediction") or {}
+    prediction_data = prediction.get("predictions") or {}
+    percent = prediction_data.get("percent") or {}
+    if any(percent.get(key) for key in ("home", "draw", "away")):
+        bits.append(
+            "оценка API: " + " / ".join(
+                str(percent.get(key) or "—") for key in ("home", "draw", "away")
+            ) + " (П1 / X / П2)"
+        )
+
+    prediction_teams = prediction.get("teams") or {}
+    home_last = (prediction_teams.get("home") or {}).get("last_5") or {}
+    away_last = (prediction_teams.get("away") or {}).get("last_5") or {}
+    if home_last or away_last:
+        bits.append(
+            f"форма 5 матчей: {_api_form_text(home_last.get('form'))} / "
+            f"{_api_form_text(away_last.get('form'))}"
+        )
+
+    standings = event.get("_api_football_standings") or {}
+    table_bits = []
+    for side, obj in (("home", home_obj), ("away", away_obj)):
+        row = standings.get(side)
+        if row:
+            table_bits.append(
+                f"{obj.get('name', side)}: {row.get('rank', '?')} место, "
+                f"{row.get('points', '?')} очк."
+            )
+    if table_bits:
+        bits.append("таблица: " + "; ".join(table_bits))
+
+    absence_bits = []
+    for item in event.get("_api_football_injuries") or []:
+        player = item.get("player") or {}
+        team = item.get("team") or {}
+        player_name = player.get("name")
+        if not player_name:
+            continue
+        kind = str(player.get("type") or "").strip()
+        reason = str(player.get("reason") or "").strip()
+        status = "под вопросом" if "question" in kind.lower() else "отсутствует"
+        detail = f"{player_name} ({team.get('name') or 'команда'}: {status}"
+        if reason:
+            detail += f", {reason}"
+        detail += ")"
+        absence_bits.append(detail)
+    if absence_bits:
+        bits.append("кадры: " + "; ".join(absence_bits[:4]))
+    else:
+        bits.append("кадры: API не вернул записей об отсутствии; это не подтверждает, что их точно нет")
+
+    market = _market_percentages(event)
+    if market:
+        labels = "П1 / X / П2" if len(market) == 3 else "П1 / П2"
+        bits.append(f"рынок без маржи букмекеров (примерно): {' / '.join(str(value) + '%' for value in market)} ({labels})")
+
+    advice = prediction_data.get("advice")
+    if advice:
+        bits.append(f"модель API: {advice}")
+    if not bits:
+        return "API-Football найден, но подробная статистика для матча не вернулась."
+    return "\n".join(bits)
+
+
+def build_daily_analysis(soccer, tennis):
+    lines = ["━━━━━━━━━━━━━━━━━━━━", "🧠 **BEZUMNIY HAALAND DUMAYET...**", ""]
+    football_with_data = [event for event in soccer if event.get("_api_football_fixture")]
+    if football_with_data:
+        lines.append("**⚽ ФУТБОЛ — ЧТО ГОВОРЯТ ДАННЫЕ**")
+        for event in football_with_data[:5]:
+            home = display_team(event.get("home_team", "?"))
+            away = display_team(event.get("away_team", "?"))
+            lines.append(f"**{home} — {away}**")
+            lines.append(football_match_analysis(event))
+            lines.append("")
+    elif soccer:
+        lines += [
+            "⚽ По выбранным футбольным матчам API-Football не вернул совпадающие карточки.",
+            "Не подменяем это догадками: форма, таблицы и кадровые новости не подтверждены.",
+            "",
+        ]
+    else:
+        lines += ["⚽ Сегодня нет выбранных футбольных матчей для разбора.", ""]
+
+    if tennis:
+        lines.append("**🎾 ТЕННИС — КОРОТКИЙ РАЗБОР**")
+        for event in tennis[:4]:
+            home = display_tennis_player(event.get("home_team", "?"))
+            away = display_tennis_player(event.get("away_team", "?"))
+            ranks = []
+            for side in ("_sportsapi_home_rank", "_sportsapi_away_rank"):
+                rank = event.get(side) or {}
+                if rank.get("position"):
+                    ranks.append(f"{rank.get('tour')} #{rank['position']}")
+            rank_text = " · " + " / ".join(ranks) if ranks else ""
+            lines.append(f"**{home} — {away}**{rank_text}")
+            lines.append(tennis_match_analysis(event))
+            lines.append("")
+    else:
+        lines += ["🎾 Сегодня нет выбранных теннисных матчей для разбора.", ""]
+
+    lines.append("*Коэффициенты отражают рынок, а не гарантию результата. Если источник не дал данные, мы их не додумываем.*")
+    return lines
+
 def main():
     now = datetime.now(KYIV)
     manual_run = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
@@ -752,6 +1004,7 @@ def main():
 
     soccer.sort(key=soccer_sort_key)
     tennis.sort(key=tennis_sort_key)
+    enrich_football_matches(today, soccer)
 
     lines = [
         f"🏆 **BEZUMNIY HAALAND**",
@@ -821,12 +1074,7 @@ def main():
         lines.append("Матчи выбранных игроков на сегодня не найдены.")
         lines.append("")
 
-    lines += [
-        "━━━━━━━━━━━━━━━━━━━━",
-        "🧠 **BEZUMNIY HAALAND DUMAYET...**",
-        "Аналитическая рубрика будет подключена следующим этапом. "
-        "Никаких выдуманных травм, судей или статистики — только проверяемые данные.",
-    ]
+    lines += build_daily_analysis(soccer, tennis)
 
     discord_send("\n".join(lines))
     print(
