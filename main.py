@@ -930,45 +930,204 @@ def football_match_analysis(event):
     return "\n".join(bits)
 
 
-def build_daily_analysis(soccer, tennis):
-    lines = ["━━━━━━━━━━━━━━━━━━━━", "🧠 **BEZUMNIY HAALAND DUMAYET...**", ""]
-    football_with_data = [event for event in soccer if event.get("_api_football_fixture")]
-    if football_with_data:
-        lines.append("**⚽ ФУТБОЛ — ЧТО ГОВОРЯТ ДАННЫЕ**")
-        for event in football_with_data[:5]:
-            home = display_team(event.get("home_team", "?"))
-            away = display_team(event.get("away_team", "?"))
-            lines.append(f"**{home} — {away}**")
-            lines.append(football_match_analysis(event))
-            lines.append("")
-    elif soccer:
-        lines += [
-            "⚽ По выбранным футбольным матчам API-Football не вернул совпадающие карточки.",
-            "Не подменяем это догадками: форма, таблицы и кадровые новости не подтверждены.",
-            "",
-        ]
-    else:
-        lines += ["⚽ Сегодня нет выбранных футбольных матчей для разбора.", ""]
+
+def _decimal_odds(event, tennis=False):
+    prices = h2h_prices(event)
+    home = prices.get(normalize(event.get("home_team", "")))
+    away = prices.get(normalize(event.get("away_team", "")))
+
+    if not home or not away:
+        return None
 
     if tennis:
-        lines.append("**🎾 ТЕННИС — КОРОТКИЙ РАЗБОР**")
-        for event in tennis[:4]:
-            home = display_tennis_player(event.get("home_team", "?"))
-            away = display_tennis_player(event.get("away_team", "?"))
-            ranks = []
-            for side in ("_sportsapi_home_rank", "_sportsapi_away_rank"):
-                rank = event.get(side) or {}
-                if rank.get("position"):
-                    ranks.append(f"{rank.get('tour')} #{rank['position']}")
-            rank_text = " · " + " / ".join(ranks) if ranks else ""
-            lines.append(f"**{home} — {away}**{rank_text}")
-            lines.append(tennis_match_analysis(event))
-            lines.append("")
-    else:
-        lines += ["🎾 Сегодня нет выбранных теннисных матчей для разбора.", ""]
+        return [(home, "home"), (away, "away")]
 
-    lines.append("*Коэффициенты отражают рынок, а не гарантию результата. Если источник не дал данные, мы их не додумываем.*")
+    draw = next((v for k, v in prices.items() if k in ("draw", "tie")), None)
+    result = [(home, "home")]
+    if draw:
+        result.append((draw, "draw"))
+    result.append((away, "away"))
+    return result
+
+
+def _football_prediction_probs(event):
+    prediction = event.get("_api_football_prediction") or {}
+    percent = (prediction.get("predictions") or {}).get("percent") or {}
+    result = {}
+
+    for key in ("home", "draw", "away"):
+        raw = str(percent.get(key) or "").replace("%", "").strip()
+        try:
+            result[key] = float(raw)
+        except (TypeError, ValueError):
+            pass
+
+    return result
+
+
+def _favorite_candidates(events, tennis=False):
+    candidates = []
+
+    for event in events:
+        odds = _decimal_odds(event, tennis=tennis)
+        if not odds:
+            continue
+
+        odds = sorted(odds, key=lambda item: item[0])
+        favorite_price, favorite_side = odds[0]
+
+        if favorite_side == "draw" or favorite_price >= 2.00:
+            continue
+
+        if tennis:
+            home_rank = (event.get("_sportsapi_home_rank") or {}).get("position")
+            away_rank = (event.get("_sportsapi_away_rank") or {}).get("position")
+
+            rank_gap = 0
+            if home_rank and away_rank:
+                rank_gap = abs(home_rank - away_rank)
+
+            confidence = (1 / favorite_price) * 100
+            if rank_gap:
+                confidence += min(rank_gap, 40) * 0.20
+
+            disagreement = False
+
+        else:
+            probs = _football_prediction_probs(event)
+            confidence = (1 / favorite_price) * 100
+
+            predicted = probs.get(favorite_side)
+            disagreement = predicted is not None and predicted < 45
+
+            if predicted is not None:
+                confidence = 0.55 * confidence + 0.45 * predicted
+
+        candidates.append({
+            "event": event,
+            "tennis": tennis,
+            "price": favorite_price,
+            "side": favorite_side,
+            "confidence": confidence,
+            "disagreement": disagreement,
+        })
+
+    return candidates
+
+
+def _candidate_names(candidate):
+    event = candidate["event"]
+
+    if candidate["tennis"]:
+        return (
+            display_tennis_player(event.get("home_team", "?")),
+            display_tennis_player(event.get("away_team", "?")),
+        )
+
+    return (
+        display_team(event.get("home_team", "?")),
+        display_team(event.get("away_team", "?")),
+    )
+
+
+def build_daily_analysis(soccer, tennis):
+    football = _favorite_candidates(soccer, tennis=False)
+    tennis_picks = _favorite_candidates(tennis, tennis=True)
+    all_candidates = football + tennis_picks
+
+    lines = [
+        "━━━━━━━━━━━━━━━━━━━━",
+        "🧠 **BEZUMNIY HAALAND DUMAYET...**",
+        "",
+    ]
+
+    if not all_candidates:
+        lines += [
+            "«Сегодня источники не дали достаточно надёжных коэффициентов, чтобы выделить фаворитов.",
+            "Не буду изображать ясновидящего: лучше пропустить сомнительный вариант, чем продавать вам воздух».",
+            "",
+        ]
+        return lines
+
+    strong = sorted(
+        [item for item in all_candidates if not item["disagreement"]],
+        key=lambda item: item["confidence"],
+        reverse=True,
+    )[:2]
+
+    risky = [item for item in all_candidates if item["disagreement"]]
+
+    if not risky:
+        risky = [
+            item for item in all_candidates
+            if 1.55 <= item["price"] < 2.00
+        ]
+
+    risky = sorted(risky, key=lambda item: item["price"])[:2]
+
+    lines.append(
+        "«Так, мужики, Холланд изучил сегодняшнюю движуху. "
+        "Вот что тут интереснее всего.»"
+    )
+    lines.append("")
+
+    if strong:
+        lines.append("🧱 **Самые убедительные фавориты**")
+
+        for item in strong:
+            home, away = _candidate_names(item)
+            favourite = home if item["side"] == "home" else away
+            opponent = away if item["side"] == "home" else home
+            sport = "теннис" if item["tennis"] else "футбол"
+
+            lines.append(
+                f"• {favourite} против {opponent} — выглядит сильнее "
+                f"(коэффициент около {item['price']:.2f}; {sport})."
+            )
+
+        lines.append("")
+
+    if risky:
+        lines.append("⚠️ **Где фаворит может подвести**")
+
+        for item in risky:
+            home, away = _candidate_names(item)
+            favourite = home if item["side"] == "home" else away
+            opponent = away if item["side"] == "home" else home
+
+            reason = (
+                "прогноз API не подтверждает преимущество"
+                if item["disagreement"]
+                else "матч выглядит достаточно близким — лёгкой прогулки не жду"
+            )
+
+            lines.append(
+                f"• {favourite} против {opponent} — {reason}."
+            )
+
+        lines.append("")
+
+    else:
+        lines.append("⚠️ **Опасные места**")
+        lines.append(
+            "«Явного конфликта между рынком и моделью не вижу, "
+            "но это не делает фаворитов гарантией»."
+        )
+        lines.append("")
+
+    lines.append(
+        "«Мой вердикт: выбираем головой, а не на эмоциях. "
+        "Бетона в спорте нет — даже самый очевидный фаворит умеет устроить цирк»."
+    )
+    lines.append("")
+
+    lines.append(
+        "*Это краткая оценка по доступным коэффициентам и данным API, "
+        "а не гарантия исхода. Если данных недостаточно, матч не попадает в подборку.*"
+    )
+
     return lines
+
 
 def main():
     now = datetime.now(KYIV)
