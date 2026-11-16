@@ -1134,7 +1134,7 @@ def main():
     manual_run = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 
     # Автоматический запуск публикует только около полуночи по Киеву.
-    if not manual_run and (now.hour != 0 or now.minute > 10):
+    if not manual_run and now.hour != 0:
         print(f"Not Kyiv midnight ({now.isoformat()}); skipping.")
         return
 
