@@ -25,4 +25,6 @@ jobs:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
+          TENNIS_API_KEY: ${{ secrets.TENNIS_API_KEY }}
         run: python main.py
