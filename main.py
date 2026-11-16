@@ -127,7 +127,8 @@ def main():
     now = datetime.now(KYIV)
     # GitHub Actions has two UTC schedules for winter/summer time.
     # Only the run that actually lands at 00:00 Kyiv time publishes.
-    if now.hour != 0 or now.minute > 10:
+    manual_run = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    if not manual_run and (now.hour != 0 or now.minute > 10):
         print(f"Not Kyiv midnight ({now.isoformat()}); skipping.")
         return
 
