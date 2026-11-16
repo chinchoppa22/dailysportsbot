@@ -377,26 +377,26 @@ def display_competition(name):
 
 
 def discord_send(content, date_label=None):
-    """Publish a compact digest: banner first, then one compact text embed."""
+    """Publish the banner first, followed by a compact forecast embed."""
     token = os.environ["DISCORD_BOT_TOKEN"]
     channel = os.environ["DISCORD_CHANNEL_ID"]
 
     # Discord embed descriptions are limited to 4,096 characters.
-    # Split only at line boundaries and keep each publication compact.
+    # Split at blank lines so individual matches and their analysis stay together.
     chunks = []
     current = []
     current_len = 0
-    for line in content.splitlines():
-        extra = len(line) + (1 if current else 0)
+    for paragraph in content.split("\n\n"):
+        extra = len(paragraph) + (2 if current else 0)
         if current and current_len + extra > 3800:
-            chunks.append("\n".join(current))
-            current = [line]
-            current_len = len(line)
+            chunks.append("\n\n".join(current))
+            current = [paragraph]
+            current_len = len(paragraph)
         else:
-            current.append(line)
+            current.append(paragraph)
             current_len += extra
     if current:
-        chunks.append("\n".join(current))
+        chunks.append("\n\n".join(current))
     if not chunks:
         chunks = ["Прогнозы на сегодня пока недоступны."]
 
@@ -406,21 +406,26 @@ def discord_send(content, date_label=None):
         files = None
         data = None
 
-        # The first embed contains only the banner, so it is visibly above
-        # the forecast embed in Discord's embed stack.
+        # Separate first embed keeps the full-width banner above all match content,
+        # matching the earlier visual treatment.
         if index == 0 and os.path.isfile(banner_path):
             embeds.append({
-                "color": 0x477FB8,
+                "title": "🏆 BEZUMNIY HAALAND",
+                "description": (
+                    f"СПОРТИВНАЯ АФИША · {date_label}\n"
+                    "Футбол • Теннис • Коэффициенты букмекеров\n"
+                    "🕒 Время указано по Киеву"
+                ),
+                "color": 0x5C91C9,
                 "image": {"url": "attachment://haaland_banner.png"},
+                "footer": {"text": "DAILY SPORTS DIGEST"},
             })
 
         embeds.append({
             "title": f"⚽ DAILY SPORTS · {date_label}" if index == 0 else "Продолжение прогнозов",
             "description": chunk,
-            "color": 0x477FB8,
-            "footer": {
-                "text": "BEZUMNIY HAALAND  •  Время указано по Киеву"
-            },
+            "color": 0x5C91C9,
+            "footer": {"text": "BEZUMNIY HAALAND • Время указано по Киеву"},
         })
         payload = {"embeds": embeds}
 
@@ -1260,9 +1265,9 @@ def main():
 
     lines = [
         "**⚽ ФУТБОЛ**",
+        "",
     ]
 
-    football_rows = []
     if soccer:
         grouped_soccer = {}
         for event in soccer[:25]:
@@ -1270,24 +1275,23 @@ def main():
             grouped_soccer.setdefault(display_competition(league), []).append(event)
 
         for competition, events in grouped_soccer.items():
+            lines.append(f"🏆 **{competition}**")
             for event in events:
                 home = display_team(event.get("home_team", "?"))
                 away = display_team(event.get("away_team", "?"))
-                football_rows.append(
-                    f"🏆 {competition} · {format_time(event['commence_time'])}  "
-                    f"{home} — {away}  |  {colored_price_text(event)}"
+                # Keep flags and team names outside ANSI blocks so Discord renders
+                # country flags correctly. Odds get their own muted-color line.
+                lines.append(
+                    f"`{format_time(event['commence_time'])}`  {home} — {away}"
                 )
+                lines.append("```ansi\n" + colored_price_text(event) + "\n```")
+                lines.append("")
     else:
         lines.append("_Сегодня подходящих матчей из выбранного списка нет._")
+        lines.append("")
 
-    if football_rows:
-        lines.append("```ansi")
-        lines.extend(football_rows)
-        lines.append("```")
+    lines += ["━━━━━━━━━━━━━━━━━━━━", "**🎾 ТЕННИС**", ""]
 
-    lines += ["", "**🎾 ТЕННИС**"]
-    tennis_rows = []
-    tennis_notes = []
     if tennis:
         for event in tennis[:20]:
             tournament = (
@@ -1305,22 +1309,23 @@ def main():
             if away_rank.get("position"):
                 rank_bits.append(f"{away_rank.get('tour')} #{away_rank['position']}")
             rank_text = " · " + " / ".join(rank_bits) if rank_bits else ""
-            tennis_rows.append(
-                f"{format_time(event['commence_time'])}  {home} — {away}  |  "
-                f"{colored_price_text(event, tennis=True)}"
+
+            lines.append(
+                f"🏆 **{display_competition(tournament)}** · "
+                f"`{format_time(event['commence_time'])}`{rank_text}"
             )
-            tennis_notes.append(
-                f"_{display_competition(tournament)}{rank_text} · "
-                f"{tennis_match_analysis(event)}_"
+            lines.append(f"{home} — {away}")
+            lines.append(
+                "```ansi\n" + colored_price_text(event, tennis=True) + "\n```"
             )
+            # Per-match API stats and both players' form sit immediately below
+            # the corresponding match, never in a detached summary section.
+            analysis_text = tennis_match_analysis(event)
+            lines.append(f"_{analysis_text}_")
+            lines.append("")
     else:
         lines.append("_Матчи выбранных игроков на сегодня не найдены._")
-
-    if tennis_rows:
-        lines.append("```ansi")
-        lines.extend(tennis_rows)
-        lines.append("```")
-        lines.extend(tennis_notes)
+        lines.append("")
 
     lines += build_daily_analysis(soccer, tennis)
 
