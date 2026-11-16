@@ -930,171 +930,158 @@ def football_match_analysis(event):
     return "\n".join(bits)
 
 
-def _decimal_odds(event, tennis=False):
-    prices = h2h_prices(event)
-    home = prices.get(normalize(event.get("home_team", "")))
-    away = prices.get(normalize(event.get("away_team", "")))
-    if not home or not away:
-        return None
-    if tennis:
-        return [(home, "home"), (away, "away")]
-    draw = next((v for k, v in prices.items() if k in ("draw", "tie")), None)
-    result = [(home, "home")]
-    if draw:
-        result.append((draw, "draw"))
-    result.append((away, "away"))
-    return result
-
-
-def _football_prediction_probs(event):
-    prediction = event.get("_api_football_prediction") or {}
-    percent = (prediction.get("predictions") or {}).get("percent") or {}
-    result = {}
-    for key, side in (("home", "home"), ("draw", "draw"), ("away", "away")):
-        raw = str(percent.get(key) or "").replace("%", "").strip()
-        try:
-            result[side] = float(raw)
-        except (TypeError, ValueError):
-            pass
-    return result
-
-
-def _favorite_candidates(events, tennis=False):
-    candidates = []
-    for event in events:
-        odds = _decimal_odds(event, tennis=tennis)
-        if not odds:
-            continue
-        odds = sorted(odds, key=lambda item: item[0])
-        favorite_price, favorite_side = odds[0]
-        if favorite_side == "draw" or favorite_price >= 2.00:
-            continue
-
-        if tennis:
-            home_rank = (event.get("_sportsapi_home_rank") or {}).get("position")
-            away_rank = (event.get("_sportsapi_away_rank") or {}).get("position")
-            rank_gap = 0
-            if home_rank and away_rank:
-                rank_gap = abs(home_rank - away_rank)
-            confidence = (1 / favorite_price) * 100
-            if rank_gap:
-                confidence += min(rank_gap, 40) * 0.20
-            disagreement = False
-        else:
-            probs = _football_prediction_probs(event)
-            confidence = (1 / favorite_price) * 100
-            prediction_side = "home" if favorite_side == "home" else "away"
-            predicted = probs.get(prediction_side)
-            disagreement = predicted is not None and predicted < 45
-            if predicted is not None:
-                confidence = 0.55 * confidence + 0.45 * predicted
-
-        candidates.append({
-            "event": event,
-            "tennis": tennis,
-            "price": favorite_price,
-            "side": favorite_side,
-            "confidence": confidence,
-            "disagreement": disagreement,
-        })
-    return candidates
-
-
-def _candidate_names(candidate):
-    event = candidate["event"]
-    if candidate["tennis"]:
-        return (
-            display_tennis_player(event.get("home_team", "?")),
-            display_tennis_player(event.get("away_team", "?")),
-        )
-    return (
-        display_team(event.get("home_team", "?")),
-        display_team(event.get("away_team", "?")),
-    )
-
-
 def build_daily_analysis(soccer, tennis):
-    """Short, conversational Haaland verdict based on available odds and API predictions."""
-    football = _favorite_candidates(soccer, tennis=False)
-    tennis_picks = _favorite_candidates(tennis, tennis=True)
-    all_candidates = football + tennis_picks
+    lines = ["━━━━━━━━━━━━━━━━━━━━", "🧠 **BEZUMNIY HAALAND DUMAYET...**", ""]
+    football_with_data = [event for event in soccer if event.get("_api_football_fixture")]
+    if football_with_data:
+        lines.append("**⚽ ФУТБОЛ — ЧТО ГОВОРЯТ ДАННЫЕ**")
+        for event in football_with_data[:5]:
+            home = display_team(event.get("home_team", "?"))
+            away = display_team(event.get("away_team", "?"))
+            lines.append(f"**{home} — {away}**")
+            lines.append(football_match_analysis(event))
+            lines.append("")
+    elif soccer:
+        lines += [
+            "⚽ По выбранным футбольным матчам API-Football не вернул совпадающие карточки.",
+            "Не подменяем это догадками: форма, таблицы и кадровые новости не подтверждены.",
+            "",
+        ]
+    else:
+        lines += ["⚽ Сегодня нет выбранных футбольных матчей для разбора.", ""]
+
+    if tennis:
+        lines.append("**🎾 ТЕННИС — КОРОТКИЙ РАЗБОР**")
+        for event in tennis[:4]:
+            home = display_tennis_player(event.get("home_team", "?"))
+            away = display_tennis_player(event.get("away_team", "?"))
+            ranks = []
+            for side in ("_sportsapi_home_rank", "_sportsapi_away_rank"):
+                rank = event.get(side) or {}
+                if rank.get("position"):
+                    ranks.append(f"{rank.get('tour')} #{rank['position']}")
+            rank_text = " · " + " / ".join(ranks) if ranks else ""
+            lines.append(f"**{home} — {away}**{rank_text}")
+            lines.append(tennis_match_analysis(event))
+            lines.append("")
+    else:
+        lines += ["🎾 Сегодня нет выбранных теннисных матчей для разбора.", ""]
+
+    lines.append("*Коэффициенты отражают рынок, а не гарантию результата. Если источник не дал данные, мы их не додумываем.*")
+    return lines
+
+def main():
+    now = datetime.now(KYIV)
+    manual_run = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+
+    # Автоматический запуск публикует только около полуночи по Киеву.
+    if not manual_run and (now.hour != 0 or now.minute > 10):
+        print(f"Not Kyiv midnight ({now.isoformat()}); skipping.")
+        return
+
+    today = now.date()
+
+    soccer = [
+        event for event in get_fixtures("soccer")
+        if event.get("commence_time")
+        and local_day(event["commence_time"]) == today
+        and is_soccer_relevant(event)
+    ]
+    odds_tennis = get_fixtures("tennis")
+    tennis = get_sportsapi_tennis_fixtures(today, odds_tennis)
+    if not tennis:
+        # Safe fallback: OddsLink still supplies matches for the eight manually prioritised players.
+        tennis = [
+            event for event in odds_tennis
+            if event.get("commence_time")
+            and local_day(event["commence_time"]) == today
+            and contains_name(
+                f"{event.get('home_team', '')} {event.get('away_team', '')}",
+                TENNIS_PRIORITY,
+            )
+        ]
+        print("SportsAPI returned no matching tennis fixtures; using OddsLink priority-player fallback.")
+
+    soccer.sort(key=soccer_sort_key)
+    tennis.sort(key=tennis_sort_key)
+    enrich_football_matches(today, soccer)
 
     lines = [
+        f"🏆 **BEZUMNIY HAALAND**",
+        f"**СПОРТИВНАЯ АФИША · {today.strftime('%d.%m.%Y')}**",
+        "🕒 Время указано по Киеву.",
+        "",
         "━━━━━━━━━━━━━━━━━━━━",
-        "🧠 **BEZUMNIY HAALAND DUMAYET...**",
+        "⚽ **ФУТБОЛ**",
         "",
     ]
 
-    if not all_candidates:
-        lines += [
-            "«Сегодня источники не дали достаточно надёжных коэффициентов, чтобы выделить фаворитов.",
-            "Не буду изображать ясновидящего: лучше пропустить сомнительный вариант, чем продавать вам воздух».",
-            "",
-        ]
-        return lines
+    if soccer:
+        # Группируем матчи по турнирам, сохраняя порядок приоритетов.
+        grouped_soccer = {}
+        for event in soccer[:25]:
+            league = (event.get("league") or {}).get("title") or "Турнир"
+            grouped_soccer.setdefault(display_competition(league), []).append(event)
 
-    # Strongest market favourites first. Avoid presenting every match.
-    strong = sorted(
-        [item for item in all_candidates if not item["disagreement"]],
-        key=lambda item: item["confidence"],
-        reverse=True,
-    )[:2]
-
-    # Risk list: market favourite contradicted by API prediction, or a relatively
-    # short-priced favourite without a clear market edge.
-    risky = [item for item in all_candidates if item["disagreement"]]
-    if not risky:
-        risky = [
-            item for item in all_candidates
-            if 1.55 <= item["price"] < 2.00
-        ]
-    risky = sorted(risky, key=lambda item: item["price"])[:2]
-
-    lines.append("«Так, мужики, Холланд изучил сегодняшнюю движуху. Вот что тут интереснее всего.»")
-    lines.append("")
-
-    if strong:
-        lines.append("🧱 **Самые убедительные фавориты**")
-        for item in strong:
-            home, away = _candidate_names(item)
-            favourite = home if item["side"] == "home" else away
-            opponent = away if item["side"] == "home" else home
-            sport = "теннис" if item["tennis"] else "футбол"
-            lines.append(
-                f"• {favourite} против {opponent} — выглядит сильнее "
-                f"(коэффициент около {item['price']:.2f}; {sport})."
-            )
+        for competition, events in grouped_soccer.items():
+            lines.append(f"🏆 **{competition.upper()}**")
+            for event in events:
+                home = display_team(event.get("home_team", "?"))
+                away = display_team(event.get("away_team", "?"))
+                lines.append(
+                    f"`{format_time(event['commence_time'])}`  {home} — {away}"
+                )
+                lines.append(f"　`{price_text(event)}`")
+                lines.append("")
+    else:
+        lines.append("Сегодня подходящих матчей из выбранного списка нет.")
         lines.append("")
 
-    if risky:
-        lines.append("⚠️ **Где фаворит может подвести**")
-        for item in risky:
-            home, away = _candidate_names(item)
-            favourite = home if item["side"] == "home" else away
-            opponent = away if item["side"] == "home" else home
-            reason = (
-                "прогноз API не подтверждает преимущество"
-                if item["disagreement"]
-                else "матч выглядит достаточно близким — лёгкой прогулки не жду"
+    lines += ["━━━━━━━━━━━━━━━━━━━━", "🎾 **ТЕННИС**", ""]
+
+    if tennis:
+        for event in tennis[:20]:
+            tournament = (
+                (event.get("league") or {}).get("title")
+                or event.get("sport_title")
+                or "Турнир"
             )
-            lines.append(
-                f"• {favourite} против {opponent} — {reason}."
+            home = display_tennis_player(event.get("home_team", "?"))
+            away = display_tennis_player(event.get("away_team", "?"))
+            prices = price_text(event, tennis=True)
+            home_rank = event.get("_sportsapi_home_rank") or {}
+            away_rank = event.get("_sportsapi_away_rank") or {}
+            rank_bits = []
+            if home_rank.get("position"):
+                rank_bits.append(f"{home_rank.get('tour')} #{home_rank['position']}")
+            if away_rank.get("position"):
+                rank_bits.append(f"{away_rank.get('tour')} #{away_rank['position']}")
+            tournament_line = (
+                f"**{display_competition(tournament)}** · ` {event.get('_sportsapi_tour', '')} "
+                f"{format_time(event['commence_time'])}`"
             )
+            if rank_bits:
+                tournament_line += " · " + " / ".join(rank_bits)
+            lines.append(tournament_line)
+            lines.append(f"{home} — {away}")
+            lines.append(f"`П1 {prices.split(' · ')[0]} · П2 {prices.split(' · ')[1]}`"
+                         if prices != "Коэффициенты недоступны"
+                         else prices)
+            analysis_text = tennis_match_analysis(event)
+            lines.append(f"_{analysis_text}_")
+            lines.append("")
+    else:
+        lines.append("Матчи выбранных игроков на сегодня не найдены.")
         lines.append("")
 
-    if not risky:
-        lines.append("⚠️ **Опасные места**")
-        lines.append("«Явного конфликта между рынком и моделью не вижу, но это не делает фаворитов гарантией».")
-        lines.append("")
+    lines += build_daily_analysis(soccer, tennis)
 
-    lines.append(
-        "«Мой вердикт: выбираем головой, а не на эмоциях. "
-        "Бетона в спорте нет — даже самый очевидный фаворит умеет устроить цирк». "
+    discord_send("\n".join(lines))
+    print(
+        f"Published: {len(soccer)} football fixtures, "
+        f"{len(tennis)} tennis fixtures."
     )
-    lines.append("")
-    lines.append(
-        "*Это краткая оценка по доступным коэффициентам и данным API, "
-        "а не гарантия исхода. Если данных недостаточно, матч не попадает в подборку.*"
-    )
-    return lines
-    
+
+
+if __name__ == "__main__":
+    main()
