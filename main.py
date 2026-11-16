@@ -17,6 +17,8 @@ TEAM_ALIASES = {
     "Barcelona": "Варселона",
     "Real Madrid": "Реал Вардрид",
     "Shakhtar Donetsk": "Шлюхтар Донецк",
+    "Inter Milan": "Интер",
+    "Internazionale": "Интер",
     "Шахтёр Донецк": "Шлюхтар Донецк",
     "Шахтер Донецк": "Шлюхтар Донецк",
 }
@@ -35,6 +37,7 @@ SOCCER_CLUBS = [
     "Arsenal", "Арсенал",
     "The New Saints", "New Saints", "Нью-Сейнтс",
     "Paris Saint-Germain", "PSG", "ПСЖ",
+    "Inter Milan", "Internazionale", "Inter", "Интер Милан",
 ]
 
 # Европейские сборные + Аргентина и Бразилия.
@@ -97,6 +100,120 @@ TENNIS_PRIORITY = [
 ]
 
 
+
+# Русские названия для популярных команд, сборных и турниров.
+# Неизвестные английские названия ниже автоматически транслитерируются кириллицей.
+RUSSIAN_NAMES = {
+    # Клубы
+    "Dynamo Kyiv": "Динамо Киев", "Dynamo Kiev": "Динамо Киев",
+    "Shakhtar Donetsk": "Шлюхтар Донецк", "Borussia Dortmund": "Боруссия Дортмунд",
+    "Real Madrid": "Реал Вардрид", "Atletico Madrid": "Матрасники",
+    "Atlético Madrid": "Матрасники", "Bayern Munich": "Бавария",
+    "Bayern München": "Бавария", "Barcelona": "Варселона",
+    "Manchester City": "Манчестер Сити", "Liverpool": "Ливерка",
+    "Arsenal": "Арсенал", "The New Saints": "Нью-Сейнтс",
+    "New Saints": "Нью-Сейнтс", "Paris Saint-Germain": "ПСЖ", "PSG": "ПСЖ",
+    "Inter Milan": "Интер", "Internazionale": "Интер", "Inter": "Интер",
+    "Manchester United": "Манчестер Юнайтед", "Chelsea": "Челси",
+    "Tottenham Hotspur": "Тоттенхэм", "Tottenham": "Тоттенхэм",
+    "Newcastle United": "Ньюкасл", "Aston Villa": "Астон Вилла",
+    "AC Milan": "Милан", "Milan": "Милан", "Juventus": "Ювентус",
+    "Roma": "Рома", "Napoli": "Наполи", "Lazio": "Лацио",
+    "Atalanta": "Аталанта", "Bayer Leverkusen": "Байер", "Leverkusen": "Байер",
+    "RB Leipzig": "РБ Лейпциг", "Eintracht Frankfurt": "Айнтрахт",
+    "Borussia Monchengladbach": "Боруссия Мёнхенгладбах",
+    "Borussia Mönchengladbach": "Боруссия Мёнхенгладбах",
+    "Ajax": "Аякс", "PSV": "ПСВ", "Feyenoord": "Фейеноорд",
+    "Benfica": "Бенфика", "Porto": "Порту", "Sporting CP": "Спортинг",
+    "Celtic": "Селтик", "Rangers": "Рейнджерс",
+    # Сборные
+    "Albania": "Албания", "Andorra": "Андорра", "Armenia": "Армения",
+    "Austria": "Австрия", "Azerbaijan": "Азербайджан", "Belarus": "Беларусь",
+    "Belgium": "Бельгия", "Bosnia and Herzegovina": "Босния и Герцеговина",
+    "Bosnia": "Босния", "Bulgaria": "Болгария", "Croatia": "Хорватия",
+    "Cyprus": "Кипр", "Czech Republic": "Чехия", "Czechia": "Чехия",
+    "Denmark": "Дания", "England": "Англия", "Estonia": "Эстония",
+    "Faroe Islands": "Фарерские острова", "Finland": "Финляндия",
+    "France": "Франция", "Georgia": "Грузия", "Germany": "Германия",
+    "Gibraltar": "Гибралтар", "Greece": "Греция", "Hungary": "Венгрия",
+    "Iceland": "Исландия", "Ireland": "Ирландия", "Israel": "Израиль",
+    "Italy": "Италия", "Kazakhstan": "Казахстан", "Kosovo": "Косово",
+    "Latvia": "Латвия", "Liechtenstein": "Лихтенштейн", "Lithuania": "Литва",
+    "Luxembourg": "Люксембург", "Malta": "Мальта", "Moldova": "Молдова",
+    "Montenegro": "Черногория", "Netherlands": "Нидерланды",
+    "North Macedonia": "Северная Македония", "Northern Ireland": "Северная Ирландия",
+    "Norway": "Норвегия", "Poland": "Польша", "Portugal": "Португалия",
+    "Romania": "Румыния", "Russia": "Россия", "San Marino": "Сан-Марино",
+    "Scotland": "Шотландия", "Serbia": "Сербия", "Slovakia": "Словакия",
+    "Slovenia": "Словения", "Spain": "Испания", "Sweden": "Швеция",
+    "Switzerland": "Швейцария", "Turkey": "Турция", "Türkiye": "Турция",
+    "Ukraine": "Украина", "Wales": "Уэльс", "Argentina": "Аргентина",
+    "Brazil": "Бразилия", "Brasil": "Бразилия",
+    # Турниры и лиги
+    "UEFA Champions League": "Лига чемпионов УЕФА",
+    "Champions League": "Лига чемпионов", "UEFA Europa League": "Лига Европы УЕФА",
+    "Europa League": "Лига Европы", "UEFA Conference League": "Лига конференций УЕФА",
+    "Conference League": "Лига конференций", "Ukrainian Premier League": "Украинская Премьер-лига",
+    "Ukraine Premier League": "Украинская Премьер-лига", "Premier League Ukraine": "Украинская Премьер-лига",
+    "Ukrainian Cup": "Кубок Украины", "Ukraine Cup": "Кубок Украины",
+    "UEFA Nations League": "Лига наций УЕФА", "Nations League": "Лига наций",
+    "FIFA World Cup": "Чемпионат мира", "World Cup": "Чемпионат мира",
+    "UEFA European Championship": "Чемпионат Европы", "European Championship": "Чемпионат Европы",
+    "Euro": "Евро", "International Friendly": "Международный товарищеский матч",
+    "Friendlies": "Товарищеские матчи", "Premier League": "Английская Премьер-лига",
+    "La Liga": "Чемпионат Испании", "Bundesliga": "Бундеслига",
+    "Serie A": "Серия А", "Ligue 1": "Лига 1", "Eredivisie": "Эредивизи",
+    "ATP Finals": "Итоговый турнир ATP", "WTA Finals": "Итоговый турнир WTA",
+    "Australian Open": "Открытый чемпионат Австралии", "French Open": "Ролан Гаррос",
+    "Roland Garros": "Ролан Гаррос", "Wimbledon": "Уимблдон",
+    "US Open": "Открытый чемпионат США", "Davis Cup": "Кубок Дэвиса",
+    "Billie Jean King Cup": "Кубок Билли Джин Кинг",
+}
+
+# Приближённая транслитерация для редких названий, которых нет в словаре.
+_TRANSLIT = {
+    "shch": "щ", "sch": "щ", "zh": "ж", "kh": "х", "ch": "ч",
+    "sh": "ш", "yu": "ю", "ya": "я", "yo": "ё", "ts": "ц",
+    "th": "т", "ph": "ф", "ck": "к", "qu": "кв",
+}
+
+def transliterate_to_russian(value):
+    text = str(value or "?")
+    result = []
+    i = 0
+    lower = text.lower()
+    while i < len(text):
+        if text[i].isspace() or text[i] in "-–—'’.&()/":
+            result.append(text[i])
+            i += 1
+            continue
+        matched = False
+        for latin, cyrillic in _TRANSLIT.items():
+            if lower.startswith(latin, i):
+                piece = cyrillic
+                if text[i].isupper():
+                    piece = piece.capitalize()
+                result.append(piece)
+                i += len(latin)
+                matched = True
+                break
+        if matched:
+            continue
+        char = lower[i]
+        letter_map = {
+            "a":"а", "b":"б", "c":"к", "d":"д", "e":"е", "f":"ф",
+            "g":"г", "h":"х", "i":"и", "j":"дж", "k":"к", "l":"л",
+            "m":"м", "n":"н", "o":"о", "p":"п", "r":"р", "s":"с",
+            "t":"т", "u":"у", "v":"в", "w":"в", "x":"кс", "y":"й", "z":"з",
+        }
+        piece = letter_map.get(char, text[i])
+        if text[i].isupper():
+            piece = piece.capitalize()
+        result.append(piece)
+        i += 1
+    return "".join(result)
+
+
 def normalize(value):
     value = unicodedata.normalize("NFKD", str(value or ""))
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
@@ -133,13 +250,31 @@ def format_time(iso_time):
     return dt.astimezone(KYIV).strftime("%H:%M")
 
 
-def display_team(name):
-    """Показывает прозвище, если оно задано; иначе исходное имя."""
-    normalized = normalize(name)
+def russian_display_name(name):
+    """Переводит известные названия; неизвестные английские транслитерирует."""
+    value = str(name or "?").strip()
+    normalized = normalize(value)
+    for original, russian in RUSSIAN_NAMES.items():
+        if normalize(original) == normalized:
+            return russian
+    # Сначала сохраняем уже заданные авторские прозвища.
     for original, nickname in TEAM_ALIASES.items():
         if normalize(original) == normalized:
             return nickname
-    return name or "?"
+    # Если в названии есть кириллица, не портим его транслитерацией.
+    if re.search(r"[а-яё]", value, re.IGNORECASE):
+        return value
+    # Сохраняем спортивные аббревиатуры и переводим остальное.
+    value = re.sub(r"\b(ATP|WTA|ITF|FIFA|UEFA|FC|SC|CF|AC|BC)\b", lambda m: m.group(1), value, flags=re.I)
+    return transliterate_to_russian(value)
+
+
+def display_team(name):
+    return russian_display_name(name)
+
+
+def display_competition(name):
+    return russian_display_name(name)
 
 
 def h2h_prices(event):
@@ -286,7 +421,7 @@ def main():
             league = (event.get("league") or {}).get("title") or "Турнир"
             home = display_team(event.get("home_team", "?"))
             away = display_team(event.get("away_team", "?"))
-            lines.append(f"**{format_time(event['commence_time'])}** · {league}")
+            lines.append(f"**{format_time(event['commence_time'])}** · {display_competition(league)}")
             lines.append(f"{home} — {away}")
             lines.append(f"Коэффициенты: {price_text(event)}")
     else:
@@ -308,7 +443,7 @@ def main():
                 price_line = f"Коэффициенты (П1 · П2): {prices}"
             else:
                 price_line = prices
-            lines.append(f"**{format_time(event['commence_time'])}** · {tournament}")
+            lines.append(f"**{format_time(event['commence_time'])}** · {display_competition(tournament)}")
             lines.append(f"{home} — {away}")
             lines.append(price_line)
     else:
