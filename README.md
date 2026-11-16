@@ -26,3 +26,12 @@ The workflow has UTC schedules at 21:00 and 22:00. The script checks `Europe/Kyi
 - Football and tennis odds use muted ANSI colors in Discord code blocks: lower odds are muted green, higher odds are muted red, and football draw odds are always gray.
 - The bot still uses the existing API sources, match filters, analysis and Kyiv-time schedule.
 - Make sure the Discord bot has **Send Messages**, **Embed Links**, and **Attach Files** permissions in the target channel.
+
+
+## Compact Discord layout
+- The Haaland banner is sent as the first embed, above the forecast.
+- All fixtures are grouped into compact football and tennis sections.
+- Odds for each sport are kept in a shared ANSI block to avoid a separate tall code block for every match.
+- Football: the lower of P1/P2 is muted green, draw (X) is gray, and the higher of P1/P2 is muted red.
+- Tennis: the lower price is muted green and the higher price is muted red.
+- Long digests are split at line boundaries to stay within Discord embed limits.

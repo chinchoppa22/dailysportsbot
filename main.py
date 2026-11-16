@@ -377,42 +377,54 @@ def display_competition(name):
 
 
 def discord_send(content, date_label=None):
-    """Send the daily digest in chunks and attach the banner to the first message."""
+    """Publish a compact digest: banner first, then one compact text embed."""
     token = os.environ["DISCORD_BOT_TOKEN"]
     channel = os.environ["DISCORD_CHANNEL_ID"]
 
-    # Keep every Discord message below the 2,000-character content limit.
+    # Discord embed descriptions are limited to 4,096 characters.
+    # Split only at line boundaries and keep each publication compact.
     chunks = []
-    remaining = content
-    while len(remaining) > 1850:
-        split_at = remaining.rfind("\n\n", 0, 1850)
-        if split_at < 500:
-            split_at = remaining.rfind("\n", 0, 1850)
-        if split_at < 1:
-            split_at = 1850
-        chunks.append(remaining[:split_at].strip())
-        remaining = remaining[split_at:].strip()
-    if remaining:
-        chunks.append(remaining)
+    current = []
+    current_len = 0
+    for line in content.splitlines():
+        extra = len(line) + (1 if current else 0)
+        if current and current_len + extra > 3800:
+            chunks.append("\n".join(current))
+            current = [line]
+            current_len = len(line)
+        else:
+            current.append(line)
+            current_len += extra
+    if current:
+        chunks.append("\n".join(current))
+    if not chunks:
+        chunks = ["Прогнозы на сегодня пока недоступны."]
 
     banner_path = os.path.join(os.path.dirname(__file__), "haaland_banner.png")
     for index, chunk in enumerate(chunks):
-        payload = {"content": chunk}
+        embeds = []
         files = None
         data = None
 
+        # The first embed contains only the banner, so it is visibly above
+        # the forecast embed in Discord's embed stack.
         if index == 0 and os.path.isfile(banner_path):
-            payload["embeds"] = [{
-                "title": "🏆 BEZUMNIY HAALAND",
-                "description": (
-                    f"СПОРТИВНАЯ АФИША · {date_label}\n"
-                    "Футбол • Теннис • Коэффициенты букмекеров\n"
-                    "🕒 Время указано по Киеву"
-                ),
-                "color": 0x5C91C9,
+            embeds.append({
+                "color": 0x477FB8,
                 "image": {"url": "attachment://haaland_banner.png"},
-                "footer": {"text": "DAILY SPORTS DIGEST"},
-            }]
+            })
+
+        embeds.append({
+            "title": f"⚽ DAILY SPORTS · {date_label}" if index == 0 else "Продолжение прогнозов",
+            "description": chunk,
+            "color": 0x477FB8,
+            "footer": {
+                "text": "BEZUMNIY HAALAND  •  Время указано по Киеву"
+            },
+        })
+        payload = {"embeds": embeds}
+
+        if index == 0 and os.path.isfile(banner_path):
             data = {"payload_json": json.dumps(payload, ensure_ascii=False)}
             files = {
                 "files[0]": (
@@ -445,7 +457,6 @@ def discord_send(content, date_label=None):
         finally:
             if files:
                 files["files[0]"][1].close()
-
 
 def _ansi_odds(value, color_code):
     return f"\x1b[{color_code}m{value:.2f}\x1b[0m"
@@ -485,7 +496,7 @@ def colored_price_text(event, tennis=False):
             f"П2 {_ansi_odds(away, away_color)}"
         )
 
-    return f"```ansi\n{text}\n```"
+    return text
 
 
 def h2h_prices(event):
@@ -1248,36 +1259,35 @@ def main():
     enrich_football_matches(today, soccer)
 
     lines = [
-        "🕒 **Время указано по Киеву.**",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "⚽ **ФУТБОЛ**",
-        "",
+        "**⚽ ФУТБОЛ**",
     ]
 
+    football_rows = []
     if soccer:
-        # Группируем матчи по турнирам, сохраняя порядок приоритетов.
         grouped_soccer = {}
         for event in soccer[:25]:
             league = (event.get("league") or {}).get("title") or "Турнир"
             grouped_soccer.setdefault(display_competition(league), []).append(event)
 
         for competition, events in grouped_soccer.items():
-            lines.append(f"🏆 **{competition.upper()}**")
             for event in events:
                 home = display_team(event.get("home_team", "?"))
                 away = display_team(event.get("away_team", "?"))
-                lines.append(
-                    f"`{format_time(event['commence_time'])}`  {home} — {away}"
+                football_rows.append(
+                    f"🏆 {competition} · {format_time(event['commence_time'])}  "
+                    f"{home} — {away}  |  {colored_price_text(event)}"
                 )
-                lines.append(colored_price_text(event))
-                lines.append("")
     else:
-        lines.append("Сегодня подходящих матчей из выбранного списка нет.")
-        lines.append("")
+        lines.append("_Сегодня подходящих матчей из выбранного списка нет._")
 
-    lines += ["━━━━━━━━━━━━━━━━━━━━", "🎾 **ТЕННИС**", ""]
+    if football_rows:
+        lines.append("```ansi")
+        lines.extend(football_rows)
+        lines.append("```")
 
+    lines += ["", "**🎾 ТЕННИС**"]
+    tennis_rows = []
+    tennis_notes = []
     if tennis:
         for event in tennis[:20]:
             tournament = (
@@ -1287,7 +1297,6 @@ def main():
             )
             home = display_tennis_player(event.get("home_team", "?"))
             away = display_tennis_player(event.get("away_team", "?"))
-            prices = price_text(event, tennis=True)
             home_rank = event.get("_sportsapi_home_rank") or {}
             away_rank = event.get("_sportsapi_away_rank") or {}
             rank_bits = []
@@ -1295,21 +1304,23 @@ def main():
                 rank_bits.append(f"{home_rank.get('tour')} #{home_rank['position']}")
             if away_rank.get("position"):
                 rank_bits.append(f"{away_rank.get('tour')} #{away_rank['position']}")
-            tournament_line = (
-                f"**{display_competition(tournament)}** · ` {event.get('_sportsapi_tour', '')} "
-                f"{format_time(event['commence_time'])}`"
+            rank_text = " · " + " / ".join(rank_bits) if rank_bits else ""
+            tennis_rows.append(
+                f"{format_time(event['commence_time'])}  {home} — {away}  |  "
+                f"{colored_price_text(event, tennis=True)}"
             )
-            if rank_bits:
-                tournament_line += " · " + " / ".join(rank_bits)
-            lines.append(tournament_line)
-            lines.append(f"{home} — {away}")
-            lines.append(colored_price_text(event, tennis=True))
-            analysis_text = tennis_match_analysis(event)
-            lines.append(f"_{analysis_text}_")
-            lines.append("")
+            tennis_notes.append(
+                f"_{display_competition(tournament)}{rank_text} · "
+                f"{tennis_match_analysis(event)}_"
+            )
     else:
-        lines.append("Матчи выбранных игроков на сегодня не найдены.")
-        lines.append("")
+        lines.append("_Матчи выбранных игроков на сегодня не найдены._")
+
+    if tennis_rows:
+        lines.append("```ansi")
+        lines.extend(tennis_rows)
+        lines.append("```")
+        lines.extend(tennis_notes)
 
     lines += build_daily_analysis(soccer, tennis)
 
