@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import unicodedata
 import requests
@@ -375,35 +376,116 @@ def display_competition(name):
     return russian_display_name(name)
 
 
-def discord_send(content):
+def discord_send(content, date_label=None):
+    """Send the daily digest in chunks and attach the banner to the first message."""
     token = os.environ["DISCORD_BOT_TOKEN"]
     channel = os.environ["DISCORD_CHANNEL_ID"]
-    # Discord ограничивает текст одного сообщения 2000 символами.
-    # Отправляем несколькими частями только если афиша действительно длинная.
+
+    # Keep every Discord message below the 2,000-character content limit.
     chunks = []
     remaining = content
-    while len(remaining) > 1900:
-        split_at = remaining.rfind("\n\n", 0, 1900)
+    while len(remaining) > 1850:
+        split_at = remaining.rfind("\n\n", 0, 1850)
         if split_at < 500:
-            split_at = remaining.rfind("\n", 0, 1900)
+            split_at = remaining.rfind("\n", 0, 1850)
         if split_at < 1:
-            split_at = 1900
+            split_at = 1850
         chunks.append(remaining[:split_at].strip())
         remaining = remaining[split_at:].strip()
     if remaining:
         chunks.append(remaining)
 
-    for chunk in chunks:
-        response = requests.post(
-            f"https://discord.com/api/v10/channels/{channel}/messages",
-            headers={
-                "Authorization": f"Bot {token}",
-                "Content-Type": "application/json",
-            },
-            json={"content": chunk},
-            timeout=30,
+    banner_path = os.path.join(os.path.dirname(__file__), "haaland_banner.png")
+    for index, chunk in enumerate(chunks):
+        payload = {"content": chunk}
+        files = None
+        data = None
+
+        if index == 0 and os.path.isfile(banner_path):
+            payload["embeds"] = [{
+                "title": "🏆 BEZUMNIY HAALAND",
+                "description": (
+                    f"СПОРТИВНАЯ АФИША · {date_label}\n"
+                    "Футбол • Теннис • Коэффициенты букмекеров\n"
+                    "🕒 Время указано по Киеву"
+                ),
+                "color": 0x5C91C9,
+                "image": {"url": "attachment://haaland_banner.png"},
+                "footer": {"text": "DAILY SPORTS DIGEST"},
+            }]
+            data = {"payload_json": json.dumps(payload, ensure_ascii=False)}
+            files = {
+                "files[0]": (
+                    "haaland_banner.png",
+                    open(banner_path, "rb"),
+                    "image/png",
+                )
+            }
+
+        try:
+            if files:
+                response = requests.post(
+                    f"https://discord.com/api/v10/channels/{channel}/messages",
+                    headers={"Authorization": f"Bot {token}"},
+                    data=data,
+                    files=files,
+                    timeout=60,
+                )
+            else:
+                response = requests.post(
+                    f"https://discord.com/api/v10/channels/{channel}/messages",
+                    headers={
+                        "Authorization": f"Bot {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=30,
+                )
+            response.raise_for_status()
+        finally:
+            if files:
+                files["files[0]"][1].close()
+
+
+def _ansi_odds(value, color_code):
+    return f"\x1b[{color_code}m{value:.2f}\x1b[0m"
+
+
+def colored_price_text(event, tennis=False):
+    """Format odds with muted ANSI colors: favorite green, draw gray, outsider red."""
+    prices = h2h_prices(event)
+    if not prices:
+        return "Коэффициенты недоступны"
+
+    home = prices.get(normalize(event.get("home_team", "")))
+    away = prices.get(normalize(event.get("away_team", "")))
+    if home is None or away is None:
+        return "Коэффициенты недоступны"
+
+    # ANSI 2;32/2;31 are deliberately dim rather than vivid.
+    if home < away:
+        home_color, away_color = "2;32", "2;31"
+    elif away < home:
+        home_color, away_color = "2;31", "2;32"
+    else:
+        home_color = away_color = "2;37"
+
+    if tennis:
+        text = (
+            f"П1 {_ansi_odds(home, home_color)}  ·  "
+            f"П2 {_ansi_odds(away, away_color)}"
         )
-        response.raise_for_status()
+    else:
+        draw = next((v for k, v in prices.items() if k in ("draw", "tie")), None)
+        if draw is None:
+            return "Коэффициенты недоступны"
+        text = (
+            f"П1 {_ansi_odds(home, home_color)}  ·  "
+            f"X {_ansi_odds(draw, '2;37')}  ·  "
+            f"П2 {_ansi_odds(away, away_color)}"
+        )
+
+    return f"```ansi\n{text}\n```"
 
 
 def h2h_prices(event):
@@ -1166,9 +1248,7 @@ def main():
     enrich_football_matches(today, soccer)
 
     lines = [
-        f"🏆 **BEZUMNIY HAALAND**",
-        f"**СПОРТИВНАЯ АФИША · {today.strftime('%d.%m.%Y')}**",
-        "🕒 Время указано по Киеву.",
+        "🕒 **Время указано по Киеву.**",
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "⚽ **ФУТБОЛ**",
@@ -1190,7 +1270,7 @@ def main():
                 lines.append(
                     f"`{format_time(event['commence_time'])}`  {home} — {away}"
                 )
-                lines.append(f"　`{price_text(event)}`")
+                lines.append(colored_price_text(event))
                 lines.append("")
     else:
         lines.append("Сегодня подходящих матчей из выбранного списка нет.")
@@ -1223,9 +1303,7 @@ def main():
                 tournament_line += " · " + " / ".join(rank_bits)
             lines.append(tournament_line)
             lines.append(f"{home} — {away}")
-            lines.append(f"`П1 {prices.split(' · ')[0]} · П2 {prices.split(' · ')[1]}`"
-                         if prices != "Коэффициенты недоступны"
-                         else prices)
+            lines.append(colored_price_text(event, tennis=True))
             analysis_text = tennis_match_analysis(event)
             lines.append(f"_{analysis_text}_")
             lines.append("")
@@ -1235,7 +1313,7 @@ def main():
 
     lines += build_daily_analysis(soccer, tennis)
 
-    discord_send("\n".join(lines))
+    discord_send("\n".join(lines), today.strftime("%d.%m.%Y"))
     print(
         f"Published: {len(soccer)} football fixtures, "
         f"{len(tennis)} tennis fixtures."

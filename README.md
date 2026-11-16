@@ -19,3 +19,10 @@ The workflow has UTC schedules at 21:00 and 22:00. The script checks `Europe/Kyi
 - Tennis filtering currently includes the individually prioritized players only; ATP Top 20 / WTA Top 30 ranking feeds and tournament-category metadata are a later enhancement.
 - The AI review is not enabled yet. It requires a separate LLM API key and may incur usage charges.
 - Odds are averaged across available bookmaker prices for each outcome. If a complete market is unavailable, the script displays that odds are unavailable.
+
+
+## Discord presentation
+- `haaland_banner.png` is attached to the first daily post and shown as the Embed banner.
+- Football and tennis odds use muted ANSI colors in Discord code blocks: lower odds are muted green, higher odds are muted red, and football draw odds are always gray.
+- The bot still uses the existing API sources, match filters, analysis and Kyiv-time schedule.
+- Make sure the Discord bot has **Send Messages**, **Embed Links**, and **Attach Files** permissions in the target channel.
