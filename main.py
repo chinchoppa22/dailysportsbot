@@ -170,6 +170,74 @@ RUSSIAN_NAMES = {
     "Billie Jean King Cup": "Кубок Билли Джин Кинг",
 }
 
+# Особые названия стран по просьбе пользователя.
+RUSSIAN_NAMES.update({
+    "Netherlands": "Нидеры",
+    "Slovakia": "Словенско",
+    "San Marino": "Легенды футбола",
+    "Ukraine": "Урина",
+})
+
+# Флаги национальных сборных. Внутренние названия API не меняются.
+NATIONAL_FLAGS = {
+    "Albania": "🇦🇱", "Andorra": "🇦🇩", "Armenia": "🇦🇲",
+    "Austria": "🇦🇹", "Azerbaijan": "🇦🇿", "Belarus": "🇧🇾",
+    "Belgium": "🇧🇪", "Bosnia": "🇧🇦", "Bosnia and Herzegovina": "🇧🇦",
+    "Bulgaria": "🇧🇬", "Croatia": "🇭🇷", "Cyprus": "🇨🇾",
+    "Czech Republic": "🇨🇿", "Czechia": "🇨🇿", "Denmark": "🇩🇰",
+    "England": "🏴", "Estonia": "🇪🇪", "Faroe Islands": "🇫🇴",
+    "Finland": "🇫🇮", "France": "🇫🇷", "Georgia": "🇬🇪",
+    "Germany": "🇩🇪", "Gibraltar": "🇬🇮", "Greece": "🇬🇷",
+    "Hungary": "🇭🇺", "Iceland": "🇮🇸", "Ireland": "🇮🇪",
+    "Israel": "🇮🇱", "Italy": "🇮🇹", "Kazakhstan": "🇰🇿",
+    "Kosovo": "🇽🇰", "Latvia": "🇱🇻", "Liechtenstein": "🇱🇮",
+    "Lithuania": "🇱🇹", "Luxembourg": "🇱🇺", "Malta": "🇲🇹",
+    "Moldova": "🇲🇩", "Montenegro": "🇲🇪", "Netherlands": "🇳🇱",
+    "North Macedonia": "🇲🇰", "Northern Ireland": "🇬🇧",
+    "Norway": "🇳🇴", "Poland": "🇵🇱", "Portugal": "🇵🇹",
+    "Romania": "🇷🇴", "Russia": "🇷🇺", "San Marino": "🇸🇲",
+    "Scotland": "🏴", "Serbia": "🇷🇸", "Slovakia": "🇸🇰",
+    "Slovenia": "🇸🇮", "Spain": "🇪🇸", "Sweden": "🇸🇪",
+    "Switzerland": "🇨🇭", "Turkey": "🇹🇷", "Türkiye": "🇹🇷",
+    "Ukraine": "🇺🇦", "Wales": "🏴", "Argentina": "🇦🇷",
+    "Brazil": "🇧🇷", "Brasil": "🇧🇷",
+}
+
+# Для клубов используем ровно один цветной значок.
+CLUB_BADGES = {
+     "Dynamo Kyiv": "🔵", "Dynamo Kiev": "🔵", "Динамо Киев": "🔵", "Динамо Київ": "🔵",
+     "Shakhtar Donetsk": "🟠", "Шахтёр Донецк": "🟠", "Шахтер Донецк": "🟠",
+    "Borussia Dortmund": "🟡", "Боруссия Дортмунд": "🟡",
+     "Real Madrid": "⚪", "Реал Мадрид": "⚪",
+    "Atletico Madrid": "🔴", "Atlético Madrid": "🔴", "Атлетико Мадрид": "🔴",
+     "Bayern Munich": "🔴", "Bayern München": "🔴", "Бавария": "🔴",
+    "Barcelona": "🔵", "Барселона": "🔵",
+     "Manchester City": "🩵", "Манчестер Сити": "🩵",
+    "Liverpool": "🔴", "Ливерпуль": "🔴", "Arsenal": "🔴", "Арсенал": "🔴",
+    "The New Saints": "🟢", "New Saints": "🟢",
+     "Paris Saint-Germain": "🔵", "PSG": "🔵", "ПСЖ": "🔵",
+     "Inter Milan": "🔵", "Internazionale": "🔵", "Inter": "🔵", "Интер": "🔵",
+}
+
+TENNIS_PLAYER_NAMES = {
+    "Anna Kalinskaya": "Анна Калинская",
+    "Mirra Andreeva": "Мирра Андреева",
+    "Iva Jovic": "Ива Йович", "Iva Jović": "Ива Йович",
+    "Elena Rybakina": "Елена Рыбакина",
+    "Alexander Zverev": "Александр Зверев",
+    "Carlos Alcaraz": "Карлос Алькарас",
+    "Jannik Sinner": "Янник Синнер",
+    "Daniil Medvedev": "Даниил Медведев",
+}
+TENNIS_PLAYER_FLAGS = {
+    "Anna Kalinskaya": "🇷🇺", "Mirra Andreeva": "🇷🇺",
+    "Iva Jovic": "🇺🇸", "Iva Jović": "🇺🇸",
+    "Elena Rybakina": "🇰🇿", "Alexander Zverev": "🇩🇪",
+    "Carlos Alcaraz": "🇪🇸", "Jannik Sinner": "🇮🇹",
+    "Daniil Medvedev": "🇷🇺",
+}
+
+
 # Приближённая транслитерация для редких названий, которых нет в словаре.
 _TRANSLIT = {
     "shch": "щ", "sch": "щ", "zh": "ж", "kh": "х", "ch": "ч",
@@ -269,12 +337,68 @@ def russian_display_name(name):
     return transliterate_to_russian(value)
 
 
+def _mapped_value(name, mapping):
+    normalized = normalize(name)
+    for original, value in mapping.items():
+        if normalize(original) == normalized:
+            return value
+    return None
+
+
 def display_team(name):
-    return russian_display_name(name)
+    value = str(name or "?").strip()
+    # Сначала проверяем сборные: у них отображается государственный флаг.
+    flag = _mapped_value(value, NATIONAL_FLAGS)
+    if flag:
+        return f"{flag} {russian_display_name(value)}"
+    # Затем клубы: один цветной значок перед названием.
+    badge = _mapped_value(value, CLUB_BADGES)
+    if badge:
+        return f"{badge} {russian_display_name(value)}"
+    # Для остальных названий не придумываем флаг или цвет клуба.
+    return f"⚽ {russian_display_name(value)}"
+
+
+def display_tennis_player(name):
+    value = str(name or "?").strip()
+    russian = _mapped_value(value, TENNIS_PLAYER_NAMES) or russian_display_name(value)
+    flag = _mapped_value(value, TENNIS_PLAYER_FLAGS)
+    return f"{flag} {russian}" if flag else russian
 
 
 def display_competition(name):
     return russian_display_name(name)
+
+
+def discord_send(content):
+    token = os.environ["DISCORD_BOT_TOKEN"]
+    channel = os.environ["DISCORD_CHANNEL_ID"]
+    # Discord ограничивает текст одного сообщения 2000 символами.
+    # Отправляем несколькими частями только если афиша действительно длинная.
+    chunks = []
+    remaining = content
+    while len(remaining) > 1900:
+        split_at = remaining.rfind("\n\n", 0, 1900)
+        if split_at < 500:
+            split_at = remaining.rfind("\n", 0, 1900)
+        if split_at < 1:
+            split_at = 1900
+        chunks.append(remaining[:split_at].strip())
+        remaining = remaining[split_at:].strip()
+    if remaining:
+        chunks.append(remaining)
+
+    for chunk in chunks:
+        response = requests.post(
+            f"https://discord.com/api/v10/channels/{channel}/messages",
+            headers={
+                "Authorization": f"Bot {token}",
+                "Content-Type": "application/json",
+            },
+            json={"content": chunk},
+            timeout=30,
+        )
+        response.raise_for_status()
 
 
 def h2h_prices(event):
@@ -367,21 +491,6 @@ def tennis_sort_key(event):
     return (999, event.get("commence_time", ""))
 
 
-def discord_send(content):
-    token = os.environ["DISCORD_BOT_TOKEN"]
-    channel = os.environ["DISCORD_CHANNEL_ID"]
-    response = requests.post(
-        f"https://discord.com/api/v10/channels/{channel}/messages",
-        headers={
-            "Authorization": f"Bot {token}",
-            "Content-Type": "application/json",
-        },
-        json={"content": content[:1900]},
-        timeout=30,
-    )
-    response.raise_for_status()
-
-
 def main():
     now = datetime.now(KYIV)
     manual_run = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
@@ -410,24 +519,37 @@ def main():
     tennis.sort(key=tennis_sort_key)
 
     lines = [
-        f"🏆 **BEZUMNIY HAALAND — СПОРТИВНАЯ АФИША {today.strftime('%d.%m.%Y')}**",
-        "Время указано по Киеву.",
+        f"🏆 **BEZUMNIY HAALAND**",
+        f"**СПОРТИВНАЯ АФИША · {today.strftime('%d.%m.%Y')}**",
+        "🕒 Время указано по Киеву.",
         "",
+        "━━━━━━━━━━━━━━━━━━━━",
         "⚽ **ФУТБОЛ**",
+        "",
     ]
 
     if soccer:
+        # Группируем матчи по турнирам, сохраняя порядок приоритетов.
+        grouped_soccer = {}
         for event in soccer[:25]:
             league = (event.get("league") or {}).get("title") or "Турнир"
-            home = display_team(event.get("home_team", "?"))
-            away = display_team(event.get("away_team", "?"))
-            lines.append(f"**{format_time(event['commence_time'])}** · {display_competition(league)}")
-            lines.append(f"{home} — {away}")
-            lines.append(f"Коэффициенты: {price_text(event)}")
+            grouped_soccer.setdefault(display_competition(league), []).append(event)
+
+        for competition, events in grouped_soccer.items():
+            lines.append(f"🏆 **{competition.upper()}**")
+            for event in events:
+                home = display_team(event.get("home_team", "?"))
+                away = display_team(event.get("away_team", "?"))
+                lines.append(
+                    f"`{format_time(event['commence_time'])}`  {home} — {away}"
+                )
+                lines.append(f"　`{price_text(event)}`")
+                lines.append("")
     else:
         lines.append("Сегодня подходящих матчей из выбранного списка нет.")
+        lines.append("")
 
-    lines += ["", "🎾 **ТЕННИС**"]
+    lines += ["━━━━━━━━━━━━━━━━━━━━", "🎾 **ТЕННИС**", ""]
 
     if tennis:
         for event in tennis[:20]:
@@ -436,21 +558,24 @@ def main():
                 or event.get("sport_title")
                 or "Турнир"
             )
-            home = display_team(event.get("home_team", "?"))
-            away = display_team(event.get("away_team", "?"))
+            home = display_tennis_player(event.get("home_team", "?"))
+            away = display_tennis_player(event.get("away_team", "?"))
             prices = price_text(event, tennis=True)
-            if prices != "Коэффициенты недоступны":
-                price_line = f"Коэффициенты (П1 · П2): {prices}"
-            else:
-                price_line = prices
-            lines.append(f"**{format_time(event['commence_time'])}** · {display_competition(tournament)}")
+            lines.append(
+                f"**{display_competition(tournament)}** · "
+                f"`{format_time(event['commence_time'])}`"
+            )
             lines.append(f"{home} — {away}")
-            lines.append(price_line)
+            lines.append(f"`П1 {prices.split(' · ')[0]} · П2 {prices.split(' · ')[1]}`"
+                         if prices != "Коэффициенты недоступны"
+                         else prices)
+            lines.append("")
     else:
         lines.append("Матчи выбранных игроков на сегодня не найдены.")
+        lines.append("")
 
     lines += [
-        "",
+        "━━━━━━━━━━━━━━━━━━━━",
         "🧠 **BEZUMNIY HAALAND DUMAYET...**",
         "Аналитическая рубрика будет подключена следующим этапом. "
         "Никаких выдуманных травм, судей или статистики — только проверяемые данные.",
