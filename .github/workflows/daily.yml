@@ -2,7 +2,10 @@ name: Daily sports poster
 
 on:
   schedule:
-    - cron: "0 21,22 * * *"
+    # 02:00 Kyiv in summer (UTC+3)
+    - cron: "0 23 * * *"
+    # 02:00 Kyiv in winter (UTC+2)
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -27,4 +30,5 @@ jobs:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
           TENNIS_API_KEY: ${{ secrets.TENNIS_API_KEY }}
+          SCHEDULE_CRON: ${{ github.event.schedule || '' }}
         run: python main.py
