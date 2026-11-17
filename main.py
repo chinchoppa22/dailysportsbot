@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 API_BASE = "https://oddslink.app/v1/sports"
 SPORTS_API_BASE = "https://api.sportsapi.app/v2"
 KYIV = ZoneInfo("Europe/Kyiv")
+BANGKOK = ZoneInfo("Asia/Bangkok")
 SPORTS_API_MIN_INTERVAL = 6.1  # Free plan: 10 requests per minute.
 _sports_api_last_request = 0.0
 _sports_api_cache = {}
@@ -320,8 +321,11 @@ def local_day(iso_time):
 
 
 def format_time(iso_time):
+    """Show kickoff in Kyiv and Bangkok local time."""
     dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
-    return dt.astimezone(KYIV).strftime("%H:%M")
+    kyiv_time = dt.astimezone(KYIV).strftime("%H:%M")
+    bangkok_time = dt.astimezone(BANGKOK).strftime("%H:%M")
+    return f"{kyiv_time}/{bangkok_time}"
 
 
 def russian_display_name(name):
@@ -414,7 +418,7 @@ def discord_send(content, date_label=None):
                 "description": (
                     f"СПОРТИВНАЯ АФИША · {date_label}\n"
                     "Футбол • Теннис • Коэффициенты букмекеров\n"
-                    "🕒 Время указано по Киеву"
+                    "🕒 Время: Киев / Бангкок"
                 ),
                 "color": 0x5C91C9,
                 "image": {"url": "attachment://haaland_banner.png"},
@@ -425,7 +429,7 @@ def discord_send(content, date_label=None):
             "title": f"⚽ DAILY SPORTS · {date_label}" if index == 0 else "Продолжение прогнозов",
             "description": chunk,
             "color": 0x5C91C9,
-            "footer": {"text": "BEZUMNIY HAALAND • Время указано по Киеву"},
+            "footer": {"text": "BEZUMNIY HAALAND • Киев / Бангкок"},
         })
         payload = {"embeds": embeds}
 
@@ -1249,11 +1253,20 @@ def build_daily_analysis(soccer, tennis):
 def main():
     now = datetime.now(KYIV)
     manual_run = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    schedule_cron = os.environ.get("SCHEDULE_CRON", "")
 
-    # Автоматический запуск публикует только около полуночи по Киеву.
-    if not manual_run and now.hour != 0:
-        print(f"Not Kyiv midnight ({now.isoformat()}); skipping.")
-        return
+    # GitHub Actions uses UTC. Select the cron corresponding to Kyiv DST:
+    # 23:00 UTC = 02:00 Kyiv in summer; 00:00 UTC = 02:00 Kyiv in winter.
+    # This checks which scheduled trigger fired, NOT the actual launch time.
+    # Therefore a delayed Actions start still publishes instead of being skipped.
+    if not manual_run:
+        expected_cron = "0 23 * * *" if now.dst() else "0 0 * * *"
+        if schedule_cron != expected_cron:
+            print(
+                f"Ignoring seasonal backup schedule {schedule_cron!r}; "
+                f"expected {expected_cron!r} for Kyiv at {now.isoformat()}."
+            )
+            return
 
     today = now.date()
 
